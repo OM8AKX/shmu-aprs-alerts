@@ -9,14 +9,42 @@ Kompletný Python projekt pre **Raspberry Pi**, ktorý:
 * opakuje vysielanie každých **30 minút**
 * po expirácii automaticky posiela **kill** objektu
 * beží ako **systemd** služba s **watchdogom**
+* alebo v **Dockeri**
 
 ## Požiadavky
 
-* Raspberry Pi (alebo akýkoľvek Linux) s Python 3.9+
+* Raspberry Pi (alebo akýkoľvek Linux) s Python 3.9+ **alebo Docker**
 * Platný ham radio callsign + APRS-IS passcode
 * Internet
 
-## Rýchla inštalácia
+## Docker (odporúčané)
+
+```bash
+git clone https://github.com/OM8AKX/shmu-aprs-alerts.git
+cd shmu-aprs-alerts
+
+# Konfigurácia
+cp config/config.example.yaml config/config.yaml
+nano config/config.yaml          # callsign + passcode
+
+# Spustenie
+chmod +x docker-run.sh
+./docker-run.sh up               # build + start na pozadí
+./docker-run.sh logs             # sledovanie logov
+./docker-run.sh once             # jednorazový test
+./docker-run.sh down             # zastavenie
+```
+
+Alebo priamo s Compose:
+
+```bash
+cp config/config.example.yaml config/config.yaml
+nano config/config.yaml
+docker compose up -d --build
+docker compose logs -f
+```
+
+## Inštalácia bez Dockeru (systemd)
 
 ```bash
 git clone https://github.com/OM8AKX/shmu-aprs-alerts.git
@@ -51,6 +79,10 @@ beacon:
 ## Testovanie
 
 ```bash
+# Docker
+./docker-run.sh once
+
+# Bez Dockeru
 ./venv/bin/python main.py --config /etc/shmu-aprs/config.yaml --once
 ```
 
@@ -61,7 +93,7 @@ beacon:
 3. Filtrácia podľa krajov/okresov a minimálneho stupňa.
 4. Každých 30 minút APRS Object Report.
 5. Po expirácii kill objektu.
-6. systemd watchdog.
+6. systemd watchdog (alebo Docker restart policy).
 
 | Úroveň | Prefix | Význam |
 |--------|--------|--------|
