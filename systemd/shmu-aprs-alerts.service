@@ -1,0 +1,37 @@
+[Unit]
+Description=SHMÚ meteorologické výstrahy → APRS-IS
+Documentation=https://github.com/OM8AKX/shmu-aprs-alerts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=aprs
+Group=aprs
+WorkingDirectory=/opt/shmu-aprs-alerts
+ExecStart=/opt/shmu-aprs-alerts/venv/bin/python /opt/shmu-aprs-alerts/main.py --config /etc/shmu-aprs/config.yaml
+Restart=on-failure
+RestartSec=30
+
+# Watchdog – služba musí volať sd_notify(WATCHDOG=1) aspoň každých 90 s
+WatchdogSec=90
+NotifyAccess=main
+
+# Bezpečnosť
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=SHMU_APRS_CONFIG=/etc/shmu-aprs/config.yaml
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,67 @@
+# ============================================================
+# SHMÚ → APRS Meteorologické výstrahy
+# Skopíruj na config.yaml a uprav podľa seba
+# ============================================================
+
+aprs:
+  callsign: "OM0XXX-13"          # Tvoj callsign + SSID (odporúčané -13 pre WX/alerts)
+  passcode: 12345                # https://apps.magicbug.co.uk/passcode/
+  server: "euro.aprs2.net"       # alebo rotate.aprs2.net / slovakia.aprs2.net
+  port: 14580
+  # Softvér identifikátor (max 4 znaky + verzia)
+  software: "SHMU"
+
+# Filtre podľa okresov / krajov (kódy SHMÚ)
+# Prázdny zoznam = všetky výstrahy
+# Príklady kódov:
+#   KSK = Košický kraj
+#   PSK = Prešovský kraj
+#   BBSK = Banskobystrický kraj
+#   ZSK = Žilinský kraj
+#   TSK = Trenčiansky kraj
+#   TTSK = Trnavský kraj
+#   NSK = Nitriansky kraj
+#   BSK = Bratislavský kraj
+#   + okresy: Košice, Prešov, Poprad, atď.
+filter:
+  regions:                      # kraje (kódy)
+    - "KSK"
+    - "PSK"
+  districts:                    # konkrétne okresy (názvy alebo čiastočné)
+    - "Košice"
+    - "Prešov"
+    - "Poprad"
+    - "Spišská Nová Ves"
+    - "Michalovce"
+    - "Humenné"
+    - "Bardejov"
+  # Minimálny stupeň výstrahy (1=žltá, 2=oranžová, 3=červená)
+  min_level: 1
+
+# Správanie vysielania
+beacon:
+  interval_minutes: 30          # opakované vysielanie každých X minút
+  poll_interval_seconds: 300    # ako často kontrolovať nové výstrahy zo SHMÚ
+  object_lifetime_hours: 6      # max. doba života objektu (po expirácii sa pošle kill)
+
+# Zdroje dát
+sources:
+  # Oficiálny CAP 1.2 feed (odporúčané)
+  cap_base_url: "https://opendata.shmu.sk/meteorology/weather/alerts/cap/"
+  # Fallback – HTML stránka SHMÚ (ak CAP nie je dostupný)
+  html_url: "https://www.shmu.sk/sk/?page=1&id=meteo_vystraha"
+  use_html_fallback: true
+
+# Logovanie
+logging:
+  level: "INFO"                 # DEBUG / INFO / WARNING / ERROR
+  file: "/var/log/shmu-aprs-alerts.log"
+  max_bytes: 1048576
+  backup_count: 3
+
+# Watchdog (systemd)
+watchdog:
+  enabled: true
+  # Interval, v ktorom služba ohlasuje „som nažive“ systemd (sekundy)
+  # Musí byť menší ako WatchdogSec v .service súbore
+  interval_seconds: 60
