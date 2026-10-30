@@ -1,0 +1,17 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+.env
+config/config.yaml
+logs/
+*.log
+*.zip
+venv/
+.venv/
+*.md
+!README.md
+systemd/
+install.sh
+docker-run.sh

@@ -1,0 +1,29 @@
+# SHMÚ → APRS Alerts
+# Použitie:
+#   1. cp config/config.example.yaml config/config.yaml
+#   2. Uprav config.yaml (callsign, passcode, filtre)
+#   3. docker compose up -d
+#
+# Logy:  docker compose logs -f
+# Stop:  docker compose down
+
+services:
+  shmu-aprs:
+    build: .
+    image: shmu-aprs-alerts:latest
+    container_name: shmu-aprs-alerts
+    restart: unless-stopped
+    volumes:
+      # Konfigurácia (povinné – vytvor config.yaml pred spustením)
+      - ./config/config.yaml:/app/config/config.yaml:ro
+      # Voliteľné: perzistentné logy na hostiteľovi
+      - ./logs:/var/log
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SHMU_APRS_CONFIG=/app/config/config.yaml
+      - TZ=Europe/Bratislava
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
