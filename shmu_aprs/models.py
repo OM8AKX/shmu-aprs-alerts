@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from enum import IntEnum
 from typing import List, Optional, Tuple
 
@@ -60,12 +60,19 @@ class Alert:
     certainty: str = ""
     source: str = "SHMU"
 
-    def is_active(self, now: Optional[datetime] = None) -> bool:
+    def is_active(
+        self,
+        now: Optional[datetime] = None,
+        lead_hours: float = 12.0,
+    ) -> bool:
+        """True v okne [effective - lead_hours, expires]."""
         now = now or datetime.now(timezone.utc)
         if self.expires and now > self.expires:
             return False
-        if self.effective and now < self.effective:
-            return False
+        if self.effective:
+            start = self.effective - timedelta(hours=lead_hours)
+            if now < start:
+                return False
         return True
 
     def aprs_symbol(self) -> Tuple[str, str]:
@@ -98,7 +105,6 @@ class Alert:
         return " | ".join(parts)
 
     def object_name(self, district_code: str = "") -> str:
-        """Meno APRS objektu (max 9 znakov). district_code = skratka okresu (KE, PO…)."""
         code = (district_code or "SK")[:4].upper()
         rest = 9 - 2 - len(code)
         if rest < 1:
