@@ -9,62 +9,28 @@ from typing import List, Optional, Tuple
 
 
 class AlertLevel(IntEnum):
-    """Stupeň výstrahy podľa SHMÚ / Meteoalarm farieb."""
     NONE = 0
-    YELLOW = 1   # 1. stupeň – žltá
-    ORANGE = 2   # 2. stupeň – oranžová
-    RED = 3      # 3. stupeň – červená
+    YELLOW = 1
+    ORANGE = 2
+    RED = 3
 
     @property
     def color_sk(self) -> str:
-        return {
-            0: "žiadna",
-            1: "žltá",
-            2: "oranžová",
-            3: "červená",
-        }.get(self.value, "?")
+        return {0: "žiadna", 1: "žltá", 2: "oranžová", 3: "červená"}.get(self.value, "?")
 
     @property
     def color_en(self) -> str:
-        return {
-            0: "none",
-            1: "yellow",
-            2: "orange",
-            3: "red",
-        }.get(self.value, "?")
+        return {0: "none", 1: "yellow", 2: "orange", 3: "red"}.get(self.value, "?")
 
 
-# Mapovanie javu → APRS symbol (tabuľka, kód) – alternate table = výstrahy / WX
-# \<  NWS Advisory (gale flag)  – všeobecná výstraha
-# \T  Thunderstorm
-# \W  NWS site
-# \!  Emergency
-# \_  Weather station
-# \*  Snow
-# \F  Freezing rain family
-# \H  Haze
 _EVENT_SYMBOLS: dict[str, Tuple[str, str]] = {
-    "búrka": ("\\", "T"),
-    "búrk": ("\\", "T"),
-    "thunderstorm": ("\\", "T"),
-    "vietor": ("\\", "<"),
-    "wind": ("\\", "<"),
-    "víchr": ("\\", "<"),
-    "dážď": ("\\", "`"),
-    "rain": ("\\", "`"),
-    "lejak": ("\\", "`"),
-    "hmla": ("\\", "H"),
-    "fog": ("\\", "H"),
-    "sneženie": ("\\", "*"),
-    "sneh": ("\\", "*"),
-    "snow": ("\\", "*"),
-    "záveje": ("\\", "*"),
-    "poľadovica": ("\\", "F"),
-    "mráz": ("\\", "F"),
-    "ľad": ("\\", "F"),
-    "horúčava": ("\\", "U"),
-    "vysoké teploty": ("\\", "U"),
-    "nízke teploty": ("\\", "F"),
+    "búrka": ("\\", "T"), "búrk": ("\\", "T"), "thunderstorm": ("\\", "T"),
+    "vietor": ("\\", "<"), "wind": ("\\", "<"), "víchr": ("\\", "<"),
+    "dážď": ("\\", "`"), "rain": ("\\", "`"), "lejak": ("\\", "`"),
+    "hmla": ("\\", "H"), "fog": ("\\", "H"),
+    "sneženie": ("\\", "*"), "sneh": ("\\", "*"), "snow": ("\\", "*"), "záveje": ("\\", "*"),
+    "poľadovica": ("\\", "F"), "mráz": ("\\", "F"), "ľad": ("\\", "F"),
+    "horúčava": ("\\", "U"), "vysoké teploty": ("\\", "U"), "nízke teploty": ("\\", "F"),
 }
 
 
@@ -78,7 +44,6 @@ def _symbol_for_event(event: str) -> Optional[Tuple[str, str]]:
 
 @dataclass
 class Alert:
-    """Jedna meteorologická výstraha."""
     identifier: str
     event: str
     level: AlertLevel
@@ -104,24 +69,12 @@ class Alert:
         return True
 
     def aprs_symbol(self) -> Tuple[str, str]:
-        """
-        APRS symbol podľa úrovne a typu javu.
-
-        Returns:
-            (symbol_table, symbol_code)
-
-        Mapovanie úrovní (ak jav nemá špecifický symbol):
-          žltá    → \\<  NWS Advisory (vlajka výstrahy)
-          oranžová → \\W  NWS Site
-          červená → \\!  Emergency
-        """
         by_event = _symbol_for_event(self.event)
         if by_event:
             table, code = by_event
             if self.level == AlertLevel.RED and code not in ("T", "!"):
                 return "\\", "!"
             return table, code
-
         if self.level == AlertLevel.RED:
             return "\\", "!"
         if self.level == AlertLevel.ORANGE:
@@ -137,26 +90,27 @@ class Alert:
         return base
 
     def full_text(self) -> str:
-        parts = [
-            f"SHMU {self.level.color_sk.upper()} {self.level.value}.st.",
-            self.event,
-        ]
+        parts = [f"SHMU {self.level.color_sk.upper()} {self.level.value}.st.", self.event]
         if self.areas:
             parts.append(" / ".join(self.areas[:4]))
         if self.expires:
-            exp = self.expires.astimezone().strftime("%d.%m %H:%M")
-            parts.append(f"do {exp}")
+            parts.append(f"do {self.expires.astimezone().strftime('%d.%m %H:%M')}")
         return " | ".join(parts)
 
-    def object_name(self) -> str:
-        short_id = self.identifier[-5:] if len(self.identifier) > 5 else self.identifier
-        name = f"SH{short_id}"
+    def object_name(self, district_code: str = "") -> str:
+        """Meno APRS objektu (max 9 znakov). district_code = skratka okresu (KE, PO…)."""
+        code = (district_code or "SK")[:4].upper()
+        rest = 9 - 2 - len(code)
+        if rest < 1:
+            code = code[:3]
+            rest = 4
+        short_id = self.identifier[-rest:] if len(self.identifier) >= rest else self.identifier
+        name = f"SH{code}{short_id}"
         return name[:9].ljust(9)
 
 
 @dataclass
 class ActiveObject:
-    """Sledovaný APRS objekt, ktorý sme vyslali."""
     alert: Alert
     object_name: str
     last_sent: datetime
