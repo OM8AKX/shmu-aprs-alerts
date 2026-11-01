@@ -70,7 +70,6 @@ class AprsTransmitter:
         if not self._ais:
             self.connect()
         try:
-            # aprslib očakáva raw packet bez \r\n
             self._ais.sendall(packet)
             log.debug("TX: %s", packet)
             return True
@@ -98,32 +97,25 @@ class AprsTransmitter:
         Default súradnice = približne stred východného Slovenska (Košice).
         """
         name = alert.object_name()
-        # Timestamp DHM zulu
         now = datetime.now(timezone.utc)
         ts = now.strftime("%d%H%M") + "z"
 
         lat_s, lon_s = _deg_to_aprs(lat, lon)
 
-        # Symbol: primary table 'W' (WX), overlay podľa úrovne
-        # Overlay nie je štandardne podporovaný všade, preto farba v komentári
-        symbol_table = "/"
-        symbol_code = "W"  # weather station
+        # Symbol podľa úrovne a typu javu (NWS Advisory / Emergency / búrka …)
+        symbol_table, symbol_code = alert.aprs_symbol()
 
         if not alive:
-            # Kill object – nahradíme * za _
             live_char = "_"
         else:
             live_char = "*"
 
         comment = alert.short_comment(40)
-        # Pridáme úroveň farebne
         if alert.level == AlertLevel.RED:
             comment = "!!! " + comment
         elif alert.level == AlertLevel.ORANGE:
             comment = "!! " + comment
 
-        # Formát: ;OBJECTNAM*DDHHMMzLAT/LONSymbolCOMMENT
-        # Object name musí byť presne 9 znakov
         obj_name = name.ljust(9)[:9]
         info = f";{obj_name}{live_char}{ts}{lat_s}{symbol_table}{lon_s}{symbol_code}{comment}"
 
@@ -135,11 +127,8 @@ class AprsTransmitter:
 
     def send_bulletin(self, text: str, bulletin_id: str = "1") -> bool:
         """Pošle APRS Bulletin (BLN)."""
-        # :BLN1     :text...
         bid = bulletin_id.ljust(1)[:1]
-        # Bulletin adresát je BLNx (x = 0-9 alebo A-Z)
         dest = f"BLN{bid}"
-        # správa max 67 znakov
         msg = text[:67]
         packet = f"{self.callsign}>AP{self.software},TCPIP*::{dest.ljust(9)}:{msg}"
         ok = self._send(packet)
