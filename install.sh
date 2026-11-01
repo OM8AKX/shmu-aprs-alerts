@@ -24,9 +24,15 @@ mkdir -p "$PREFIX"
 cp -a . "$PREFIX/"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$PREFIX"
 
-sudo -u "$SERVICE_USER" python3 -m venv "$PREFIX/venv"
-sudo -u "$SERVICE_USER" "$PREFIX/venv/bin/pip" install --upgrade pip
+echo "==> Vytváram Python venv v $PREFIX/venv …"
+if [[ -d "$PREFIX/venv" ]]; then
+  echo "    (venv už existuje – preinštalujem závislosti)"
+else
+  sudo -u "$SERVICE_USER" python3 -m venv "$PREFIX/venv"
+fi
+sudo -u "$SERVICE_USER" "$PREFIX/venv/bin/pip" install --upgrade pip wheel setuptools
 sudo -u "$SERVICE_USER" "$PREFIX/venv/bin/pip" install -r "$PREFIX/requirements.txt"
+echo "==> Venv pripravený: $PREFIX/venv/bin/python"
 
 mkdir -p "$CONFIG_DIR"
 if [[ ! -f "$CONFIG_DIR/config.yaml" ]]; then
@@ -40,7 +46,6 @@ touch /var/log/shmu-aprs-alerts.log
 chown "$SERVICE_USER:$SERVICE_USER" /var/log/shmu-aprs-alerts.log
 
 cp "$PREFIX/systemd/shmu-aprs-alerts.service" /etc/systemd/system/
-# Uprav cesty v service súbore ak PREFIX nie je default
 sed -i "s|/opt/shmu-aprs-alerts|$PREFIX|g" /etc/systemd/system/shmu-aprs-alerts.service
 
 systemctl daemon-reload

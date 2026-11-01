@@ -5,53 +5,69 @@ Kompletný Python projekt pre **Raspberry Pi**, ktorý:
 * sťahuje oficiálne meteorologické výstrahy zo **SHMÚ** (CAP 1.2 + HTML fallback)
 * filtruje podľa **krajov / okresov** (Košice, Prešov, …)
 * mapuje stupne na **farebné úrovne** (žltá / oranžová / červená)
-* vysiela ich ako **APRS objekty** cez APRS-IS
+* vysiela ich ako **APRS objekty** do stredu každého okresu
+* začína vysielať **12 h pred** začiatkom platnosti
 * opakuje vysielanie každých **30 minút**
 * po expirácii automaticky posiela **kill** objektu
-* beží ako **systemd** služba s **watchdogom**
-* alebo v **Dockeri**
+* beží ako **systemd** služba s **watchdogom**, alebo v **Dockeri**
 
 ## Požiadavky
 
-* Raspberry Pi (alebo akýkoľvek Linux) s Python 3.9+ **alebo Docker**
-* Platný ham radio callsign + APRS-IS passcode
+* Raspberry Pi / Linux s **Python 3.9+**
+* Platný ham radio callsign + [APRS-IS passcode](https://apps.magicbug.co.uk/passcode/)
 * Internet
 
-## Docker (odporúčané)
+## 1. Lokálny vývoj – venv (bez root)
 
 ```bash
 git clone https://github.com/OM8AKX/shmu-aprs-alerts.git
 cd shmu-aprs-alerts
+
+# Vytvorí ./venv a nainštaluje závislosti
+chmod +x setup-venv.sh
+./setup-venv.sh
+
+# Aktivácia (voliteľné)
+source venv/bin/activate
 
 # Konfigurácia
 cp config/config.example.yaml config/config.yaml
 nano config/config.yaml          # callsign + passcode
 
-# Spustenie
-chmod +x docker-run.sh
-./docker-run.sh up               # build + start na pozadí
-./docker-run.sh logs             # sledovanie logov
-./docker-run.sh once             # jednorazový test
-./docker-run.sh down             # zastavenie
+# Test
+./venv/bin/python main.py --config config/config.yaml --once
 ```
 
-Alebo priamo s Compose:
+Manuálne namiesto `setup-venv.sh`:
 
 ```bash
-cp config/config.example.yaml config/config.yaml
-nano config/config.yaml
-docker compose up -d --build
-docker compose logs -f
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## Inštalácia bez Dockeru (systemd)
+## 2. Systémová inštalácia (systemd + venv)
 
 ```bash
 git clone https://github.com/OM8AKX/shmu-aprs-alerts.git
 cd shmu-aprs-alerts
 sudo ./install.sh
+# vytvorí používateľa aprs, venv v /opt/shmu-aprs-alerts/venv,
+# config v /etc/shmu-aprs/ a systemd službu
+
 sudo nano /etc/shmu-aprs/config.yaml   # callsign + passcode
 sudo systemctl start shmu-aprs-alerts
+journalctl -u shmu-aprs-alerts -f
+```
+
+## 3. Docker
+
+```bash
+cp config/config.example.yaml config/config.yaml
+nano config/config.yaml
+chmod +x docker-run.sh
+./docker-run.sh up
+./docker-run.sh logs
 ```
 
 ## Konfigurácia – dôležité položky
@@ -59,46 +75,35 @@ sudo systemctl start shmu-aprs-alerts
 ```yaml
 aprs:
   callsign: "OM0XXX-13"
-  passcode: 12345           # https://apps.magicbug.co.uk/passcode/
+  passcode: 12345
 
 filter:
-  regions:
-    - "KSK"
-    - "PSK"
-  districts:
-    - "Košice"
-    - "Prešov"
-    - "Poprad"
+  regions: ["KSK", "PSK"]
+  districts: ["Košice", "Prešov", "Poprad"]
   min_level: 1
 
 beacon:
   interval_minutes: 30
+  lead_hours: 12          # vysielať už X h pred začiatkom platnosti
   poll_interval_seconds: 300
-```
-
-## Testovanie
-
-```bash
-# Docker
-./docker-run.sh once
-
-# Bez Dockeru
-./venv/bin/python main.py --config /etc/shmu-aprs/config.yaml --once
 ```
 
 ## Ako to funguje
 
-1. Každých 5 minút sa stiahne CAP feed zo SHMÚ opendata.
-2. Ak je CAP prázdny, použije sa HTML fallback.
-3. Filtrácia podľa krajov/okresov a minimálneho stupňa.
-4. Každých 30 minút APRS Object Report.
-5. Po expirácii kill objektu.
-6. systemd watchdog (alebo Docker restart policy).
+1. Poll CAP feed (HTML fallback) každých 5 minút.
+2. Filter podľa krajov/okresov a `lead_hours`.
+3. Jeden APRS objekt do **stredu každého** postiženého okresu.
+4. Symbol podľa úrovne/javu (NWS Advisory, Emergency, búrka…).
+5. Po expirácii kill (`_`).
 
-| Úroveň | Prefix | Význam |
-|--------|--------|--------|
-| žltá (1) | — | bežné |
-| oranžová (2) | `!!` | zvýšená pozornosť |
-| červená (3) | `!!!` | kritická |
+| Úroveň | Prefix | Symbol (príklad) |
+|--------|--------|------------------|
+| žltá (1) | — | NWS Advisory |
+| oranžová (2) | `!!` | NWS Site |
+| červená (3) | `!!!` | Emergency |
+
+## Mapa
+
+Po odoslaní: [aprs.fi](https://aprs.fi/) – hľadaj svoj callsign alebo objekty `SH…`.
 
 73!
