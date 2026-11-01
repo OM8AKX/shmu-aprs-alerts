@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import IntEnum
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 class AlertLevel(IntEnum):
@@ -33,32 +33,67 @@ class AlertLevel(IntEnum):
             3: "red",
         }.get(self.value, "?")
 
-    @property
-    def symbol(self) -> str:
-        """APRS symbol (primary table) pre úroveň."""
-        # W = WX station,  / = primary,  \ = alternate
-        # Pre výstrahy použijeme 'W' + farba v komentári
-        return "W"
+
+# Mapovanie javu → APRS symbol (tabuľka, kód) – alternate table = výstrahy / WX
+# \<  NWS Advisory (gale flag)  – všeobecná výstraha
+# \T  Thunderstorm
+# \W  NWS site
+# \!  Emergency
+# \_  Weather station
+# \*  Snow
+# \F  Freezing rain family
+# \H  Haze
+_EVENT_SYMBOLS: dict[str, Tuple[str, str]] = {
+    "búrka": ("\\", "T"),
+    "búrk": ("\\", "T"),
+    "thunderstorm": ("\\", "T"),
+    "vietor": ("\\", "<"),
+    "wind": ("\\", "<"),
+    "víchr": ("\\", "<"),
+    "dážď": ("\\", "`"),
+    "rain": ("\\", "`"),
+    "lejak": ("\\", "`"),
+    "hmla": ("\\", "H"),
+    "fog": ("\\", "H"),
+    "sneženie": ("\\", "*"),
+    "sneh": ("\\", "*"),
+    "snow": ("\\", "*"),
+    "záveje": ("\\", "*"),
+    "poľadovica": ("\\", "F"),
+    "mráz": ("\\", "F"),
+    "ľad": ("\\", "F"),
+    "horúčava": ("\\", "U"),
+    "vysoké teploty": ("\\", "U"),
+    "nízke teploty": ("\\", "F"),
+}
+
+
+def _symbol_for_event(event: str) -> Optional[Tuple[str, str]]:
+    low = (event or "").lower()
+    for key, sym in _EVENT_SYMBOLS.items():
+        if key in low:
+            return sym
+    return None
 
 
 @dataclass
 class Alert:
     """Jedna meteorologická výstraha."""
-    identifier: str                     # unikátne ID (CAP identifier)
-    event: str                          # názov javu (Búrka, Vietor, Hmla…)
+    identifier: str
+    event: str
     level: AlertLevel
     headline: str
     description: str
     instruction: str = ""
-    areas: List[str] = field(default_factory=list)   # okresy / kraje
-    regions: List[str] = field(default_factory=list) # kódy krajov (KSK, PSK…)
+    areas: List[str] = field(default_factory=list)
+    regions: List[str] = field(default_factory=list)
     effective: Optional[datetime] = None
     expires: Optional[datetime] = None
     sent: Optional[datetime] = None
     urgency: str = ""
     severity: str = ""
     certainty: str = ""
-    source: str = "SHMU"                # CAP / HTML
+    source: str = "SHMU"
 
     def is_active(self, now: Optional[datetime] = None) -> bool:
         now = now or datetime.now(timezone.utc)
@@ -68,8 +103,32 @@ class Alert:
             return False
         return True
 
+    def aprs_symbol(self) -> Tuple[str, str]:
+        """
+        APRS symbol podľa úrovne a typu javu.
+
+        Returns:
+            (symbol_table, symbol_code)
+
+        Mapovanie úrovní (ak jav nemá špecifický symbol):
+          žltá    → \\<  NWS Advisory (vlajka výstrahy)
+          oranžová → \\W  NWS Site
+          červená → \\!  Emergency
+        """
+        by_event = _symbol_for_event(self.event)
+        if by_event:
+            table, code = by_event
+            if self.level == AlertLevel.RED and code not in ("T", "!"):
+                return "\\", "!"
+            return table, code
+
+        if self.level == AlertLevel.RED:
+            return "\\", "!"
+        if self.level == AlertLevel.ORANGE:
+            return "\\", "W"
+        return "\\", "<"
+
     def short_comment(self, max_len: int = 43) -> str:
-        """Komentár vhodný do APRS objektu (max ~43 znakov)."""
         color = self.level.color_sk.upper()
         areas = ",".join(self.areas[:2]) if self.areas else "SK"
         base = f"{color} {self.event} {areas}"
@@ -78,7 +137,6 @@ class Alert:
         return base
 
     def full_text(self) -> str:
-        """Dlhší text pre bulletin / status."""
         parts = [
             f"SHMU {self.level.color_sk.upper()} {self.level.value}.st.",
             self.event,
@@ -91,8 +149,6 @@ class Alert:
         return " | ".join(parts)
 
     def object_name(self) -> str:
-        """Meno APRS objektu (max 9 znakov)."""
-        # SHMU + skrátené ID
         short_id = self.identifier[-5:] if len(self.identifier) > 5 else self.identifier
         name = f"SH{short_id}"
         return name[:9].ljust(9)
