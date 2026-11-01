@@ -81,16 +81,21 @@ class ShmuAprsService:
         except Exception as e:
             log.debug("systemd notify zlyhal: %s", e)
 
+    def _lead_hours(self) -> float:
+        """Hodiny pred effective, kedy už začať vysielať výstrahu."""
+        return float(self.cfg.get("beacon", {}).get("lead_hours", 12))
+
     def _filter_alerts(self, alerts: List[Alert]) -> List[Alert]:
         flt = self.cfg.get("filter", {})
         regions = set(r.upper() for r in flt.get("regions", []))
         districts = [d.lower() for d in flt.get("districts", [])]
         min_level = AlertLevel(flt.get("min_level", 1))
+        lead = self._lead_hours()
         result = []
         for a in alerts:
             if a.level < min_level:
                 continue
-            if not a.is_active():
+            if not a.is_active(lead_hours=lead):
                 continue
             if not regions and not districts:
                 result.append(a)
@@ -140,6 +145,7 @@ class ShmuAprsService:
         """Jeden APRS objekt do stredu každého okresu, na ktorý sa výstraha vzťahuje."""
         now = datetime.now(timezone.utc)
         seen: Set[str] = set()
+        lead = self._lead_hours()
 
         for alert in alerts:
             positions = resolve_alert_positions(alert.areas, alert.regions)
@@ -178,7 +184,7 @@ class ShmuAprsService:
 
         to_remove = []
         for key, obj in self.active.items():
-            if key in seen and obj.alert.is_active(now):
+            if key in seen and obj.alert.is_active(now, lead_hours=lead):
                 continue
             if not obj.kill_sent:
                 district_code = key.split("|", 1)[-1] if "|" in key else "SK"
@@ -242,10 +248,11 @@ class ShmuAprsService:
         signal.signal(signal.SIGINT, _handle_signal)
 
         log.info(
-            "Služba beží. Filter: regions=%s districts=%s min_level=%s",
+            "Služba beží. Filter: regions=%s districts=%s min_level=%s lead_hours=%s",
             self.cfg.get("filter", {}).get("regions"),
             self.cfg.get("filter", {}).get("districts"),
             self.cfg.get("filter", {}).get("min_level"),
+            self._lead_hours(),
         )
 
         while self._running:
