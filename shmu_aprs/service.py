@@ -116,21 +116,10 @@ class ShmuAprsService:
                 result.append(a)
                 continue
 
-            # HTML/celoslovenská – len stredy krajov, nie každý okres
             if self._is_national(a):
-                a.areas = []
-                if regions:
-                    a.regions = list(flt.get("regions", []))
-                else:
-                    a.regions = ["SK"]
-                log.info(
-                    "Filter: celoslovenská výstraha %s → len kraje %s",
-                    a.event, a.regions,
-                )
-                result.append(a)
+                log.info("Filter: preskakujem celoslovenskú %s (iba okresy)", a.event)
                 continue
 
-            match_region = bool(regions & set(r.upper() for r in a.regions))
             match_district = False
             if districts:
                 for area in a.areas:
@@ -139,7 +128,13 @@ class ShmuAprsService:
                         match_district = True
                         break
 
-            if match_region or match_district:
+            if districts:
+                if match_district:
+                    result.append(a)
+                continue
+
+            match_region = bool(regions & set(r.upper() for r in a.regions))
+            if match_region:
                 result.append(a)
 
         log.info("Po filtri: %d výstrah (z %d)", len(result), len(alerts))
@@ -160,7 +155,8 @@ class ShmuAprsService:
             html_url = sources.get("html_url")
             if html_url:
                 try:
-                    alerts = fetch_html_alerts(html_url, self.session)
+                    regions_cfg = self.cfg.get("filter", {}).get("regions") or []
+                    alerts = fetch_html_alerts(html_url, self.session, regions=regions_cfg)
                     log.info("HTML fallback: načítaných %d výstrah (pred filtrom)", len(alerts))
                 except Exception as e:
                     log.exception("Chyba HTML fallback: %s", e)
