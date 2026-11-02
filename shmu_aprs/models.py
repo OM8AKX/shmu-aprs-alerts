@@ -22,6 +22,14 @@ class AlertLevel(IntEnum):
     def color_en(self) -> str:
         return {0: "none", 1: "yellow", 2: "orange", 3: "red"}.get(self.value, "?")
 
+    @property
+    def degree_sk(self) -> str:
+        return {0: "bez výstrahy", 1: "1. stupňa", 2: "2. stupňa", 3: "3. stupňa"}.get(self.value, "?")
+
+    @property
+    def degree_short(self) -> str:
+        return {0: "-", 1: "1.st.", 2: "2.st.", 3: "3.st."}.get(self.value, "?")
+
 
 _EVENT_SYMBOLS: dict[str, Tuple[str, str]] = {
     "búrka": ("\\", "T"), "búrk": ("\\", "T"), "thunderstorm": ("\\", "T"),
@@ -60,11 +68,7 @@ class Alert:
     certainty: str = ""
     source: str = "SHMU"
 
-    def is_active(
-        self,
-        now: Optional[datetime] = None,
-        lead_hours: float = 12.0,
-    ) -> bool:
+    def is_active(self, now: Optional[datetime] = None, lead_hours: float = 12.0) -> bool:
         now = now or datetime.now(timezone.utc)
         if self.expires and now > self.expires:
             return False
@@ -88,8 +92,8 @@ class Alert:
         return "\\", "<"
 
     def short_comment(self, max_len: int = 67, district: str = "") -> str:
-        """Celá platnosť výstrahy (všetky dni): ŽLTÁ KE Vietor 02.11 08:00-04.11 18:00"""
-        color = self.level.color_sk.upper()
+        """Výstraha 1.st. KE Vietor 02.11 08:00-04.11 18:00"""
+        degree = self.level.degree_short
         place = district or (",".join(self.areas[:2]) if self.areas else "SK")
 
         validity = ""
@@ -97,35 +101,33 @@ class Alert:
             eff = self.effective.astimezone() if self.effective else None
             exp = self.expires.astimezone() if self.expires else None
             if eff and exp:
-                validity = (
-                    f"{eff.strftime('%d.%m %H:%M')}"
-                    f"-{exp.strftime('%d.%m %H:%M')}"
-                )
+                validity = f"{eff.strftime('%d.%m %H:%M')}-{exp.strftime('%d.%m %H:%M')}"
             elif exp:
                 validity = f"do {exp.strftime('%d.%m %H:%M')}"
             elif eff:
                 validity = f"od {eff.strftime('%d.%m %H:%M')}"
 
-        head = f"{color} {place}"
+        head = f"Výstraha {degree} {place}"
         if validity:
             reserved = len(head) + 1 + len(validity) + 1
             room = max_len - reserved
-            event = (self.event or "Výstraha").strip()
-            if room < 3:
-                base = f"{color} {validity}"
+            event = (self.event or "").strip()
+            if room < 1 or not event:
+                base = f"{head} {validity}".strip()
             elif len(event) > room:
                 event = event[: max(room - 1, 1)] + "…"
                 base = f"{head} {event} {validity}"
             else:
                 base = f"{head} {event} {validity}"
         else:
-            base = f"{head} {self.event}"
+            event = (self.event or "").strip()
+            base = f"{head} {event}".strip()
             if len(base) > max_len:
                 base = base[: max_len - 1] + "…"
         return base[:max_len]
 
     def full_text(self) -> str:
-        parts = [f"SHMU {self.level.color_sk.upper()} {self.level.value}.st.", self.event]
+        parts = [f"SHMU výstraha {self.level.degree_sk}", self.event]
         if self.areas:
             parts.append(" / ".join(self.areas[:4]))
         if self.expires:
