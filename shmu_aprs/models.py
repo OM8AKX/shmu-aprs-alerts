@@ -88,10 +88,22 @@ class Alert:
             return "\\", "W"
         return "\\", "<"
 
-    def short_comment(self, max_len: int = 43) -> str:
+    def short_comment(self, max_len: int = 43, district: str = "") -> str:
+        """Komentár pre APRS objekt vrátane platnosti výstrahy."""
         color = self.level.color_sk.upper()
-        areas = ",".join(self.areas[:2]) if self.areas else "SK"
-        base = f"{color} {self.event} {areas}"
+        place = district or (",".join(self.areas[:2]) if self.areas else "SK")
+        validity = ""
+        if self.expires:
+            exp = self.expires.astimezone()
+            if self.effective:
+                eff = self.effective.astimezone()
+                if eff.date() == exp.date():
+                    validity = f" {eff.strftime('%H:%M')}-{exp.strftime('%H:%M')}"
+                else:
+                    validity = f" do {exp.strftime('%d.%m %H:%M')}"
+            else:
+                validity = f" do {exp.strftime('%d.%m %H:%M')}"
+        base = f"{color} {self.event} {place}{validity}"
         if len(base) > max_len:
             base = base[: max_len - 1] + "…"
         return base
