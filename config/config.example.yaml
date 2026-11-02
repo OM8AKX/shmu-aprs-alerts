@@ -28,7 +28,7 @@ filter:
 
 beacon:
   interval_minutes: 30
-  lead_hours: 12                 # hodiny pred začiatkom platnosti už vysielať na APRS
+  lead_hours: 0                  # 0 = vysielať až od začiatku platnosti (effective)
   poll_interval_seconds: 300
   object_lifetime_hours: 6
 
