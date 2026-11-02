@@ -86,7 +86,6 @@ class ShmuAprsService:
 
     @staticmethod
     def _is_national(alert: Alert) -> bool:
-        """Celoslovenská / bez konkrétneho okresu (HTML fallback)."""
         if not alert.areas and not alert.regions:
             return True
         national_kw = (
@@ -109,25 +108,24 @@ class ShmuAprsService:
         result = []
         for a in alerts:
             if a.level < min_level:
-                log.debug("Filter: drop %s – level %s < min %s", a.identifier, a.level, min_level)
                 continue
             if not a.is_active(lead_hours=lead):
-                log.debug("Filter: drop %s – mimo lead/expires okna", a.identifier)
                 continue
 
             if not regions and not districts:
                 result.append(a)
                 continue
 
-            # Celoslovenská (HTML) → mapuj na okresy z configu
+            # HTML/celoslovenská – len stredy krajov, nie každý okres
             if self._is_national(a):
-                if districts:
-                    a.areas = list(flt.get("districts", []))
-                if regions and not a.regions:
+                a.areas = []
+                if regions:
                     a.regions = list(flt.get("regions", []))
+                else:
+                    a.regions = ["SK"]
                 log.info(
-                    "Filter: celoslovenská výstraha %s → okresy %s",
-                    a.event, a.areas or a.regions,
+                    "Filter: celoslovenská výstraha %s → len kraje %s",
+                    a.event, a.regions,
                 )
                 result.append(a)
                 continue
@@ -143,11 +141,6 @@ class ShmuAprsService:
 
             if match_region or match_district:
                 result.append(a)
-            else:
-                log.debug(
-                    "Filter: drop %s – areas=%s regions=%s",
-                    a.identifier, a.areas, a.regions,
-                )
 
         log.info("Po filtri: %d výstrah (z %d)", len(result), len(alerts))
         return result
@@ -212,12 +205,8 @@ class ShmuAprsService:
 
                 if self._beacon_needed() or (now - obj.last_sent) > timedelta(minutes=25):
                     if self.tx and self.tx.send_object(
-                        alert,
-                        lat=lat,
-                        lon=lon,
-                        alive=True,
-                        object_name=obj_name,
-                        district_label=district_code,
+                        alert, lat=lat, lon=lon, alive=True,
+                        object_name=obj_name, district_label=district_code,
                     ):
                         obj.last_sent = now
                         obj.kill_sent = False
