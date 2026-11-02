@@ -1,4 +1,4 @@
-"""Jednoduchý fallback parser HTML stránky SHMÚ (keď CAP nie je dostupný)."""
+"""Parser HTML tabuľky výstrah SHMÚ podľa okresov (page=987)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import logging
 import re
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
+from urllib.parse import quote
 
 import requests
 from lxml import html
@@ -14,98 +15,133 @@ from .models import Alert, AlertLevel
 
 log = logging.getLogger(__name__)
 
-# Mapovanie názvov javov
-EVENT_MAP = {
-    "búrka": "Búrka",
-    "dážď": "Dážď",
-    "hmla": "Hmla",
-    "poľadovica": "Poľadovica",
-    "mráz": "Mráz",
-    "sneženie": "Sneženie",
-    "snehové jazyky": "Záveje",
-    "záveje": "Záveje",
-    "vietor": "Vietor",
-    "vietor na horách": "Vietor na horách",
-    "teploty nízke": "Nízke teploty",
-    "teploty vysoké": "Vysoké teploty",
-    "horúčava": "Vysoké teploty",
-}
+DEFAULT_DETAIL_URL = (
+    "https://www.shmu.sk/sk/?page=987&id=&d=0&jav=&roll=KSK%7CPSK"
+)
+
+_KRAJ_RE = re.compile(
+    r"(kraj|bratislavský|banskobystrický|trenčiansky|košický|"
+    r"nitriansky|trnavský|prešovský|žilinský)",
+    re.I,
+)
 
 
-def _guess_level(text: str) -> AlertLevel:
-    text = text.lower()
-    if "3. stup" in text or "3.st" in text or "červen" in text:
-        return AlertLevel.RED
-    if "2. stup" in text or "2.st" in text or "oranž" in text:
-        return AlertLevel.ORANGE
-    if "1. stup" in text or "1.st" in text or "žlt" in text:
-        return AlertLevel.YELLOW
-    return AlertLevel.YELLOW
+def _max_level_from_cells(cells: list) -> int:
+    levels = []
+    for c in cells:
+        t = (c or "").strip()
+        if t.isdigit():
+            v = int(t)
+            if 0 <= v <= 3:
+                levels.append(v)
+    return max(levels) if levels else 0
 
 
-def fetch_html_alerts(url: str, session: Optional[requests.Session] = None) -> List[Alert]:
-    """
-    Velmi jednoduchý parser – extrahuje aktuálne výstrahy z hlavnej stránky.
-    Nie je 100 % spoľahlivý (závisí od HTML), preto je to len fallback.
-    """
+def _is_kraj_row(name: str) -> bool:
+    n = name.strip()
+    if not n:
+        return True
+    if n.startswith("**") and n.endswith("**"):
+        return True
+    return bool(_KRAJ_RE.search(n)) and "mesto" not in n.lower() and "okolie" not in n.lower()
+
+
+def _normalize_district(name: str) -> str:
+    return " ".join(name.replace("**", "").split())
+
+
+def fetch_html_alerts(
+    url: str,
+    session: Optional[requests.Session] = None,
+    regions: Optional[List[str]] = None,
+) -> List[Alert]:
+    """Jedna Alert pre každý okres so stupňom ≥ 1 z tabuľky SHMÚ."""
     session = session or requests.Session()
     session.headers.update({
-        "User-Agent": "SHMU-APRS-Alerts/1.0 (Amateur Radio)",
+        "User-Agent": "SHMU-APRS-Alerts/1.1 (Amateur Radio)",
         "Accept-Language": "sk,en;q=0.8",
     })
 
+    fetch_url = url or DEFAULT_DETAIL_URL
+    if "page=987" in fetch_url and "roll=" not in fetch_url and regions:
+        roll = quote("|".join(r.upper() for r in regions), safe="|")
+        sep = "&" if "?" in fetch_url else "?"
+        fetch_url = f"{fetch_url}{sep}roll={roll}"
+    elif "page=987" not in fetch_url:
+        if regions:
+            roll = quote("|".join(r.upper() for r in regions), safe="|")
+            fetch_url = f"https://www.shmu.sk/sk/?page=987&id=&d=0&jav=&roll={roll}"
+        else:
+            fetch_url = DEFAULT_DETAIL_URL
+
     try:
-        r = session.get(url, timeout=30)
+        r = session.get(fetch_url, timeout=45)
         r.raise_for_status()
     except requests.RequestException as e:
-        log.error("HTML fallback zlyhal: %s", e)
+        log.error("HTML okresný parser zlyhal: %s", e)
         return []
 
     tree = html.fromstring(r.content)
-    alerts: List[Alert] = []
     now = datetime.now(timezone.utc)
+    alerts: List[Alert] = []
 
-    # Hľadáme texty typu „SHMÚ vydal meteorologické výstrahy – 1. stupeň“
     page_text = tree.text_content()
-
-    # Nájdeme aktuálny maximálny stupeň
-    level = AlertLevel.NONE
+    headline_level = AlertLevel.NONE
     m = re.search(r"vydal.*?výstrahy.*?(\d)\.\s*stup", page_text, re.I)
     if m:
-        level = AlertLevel(int(m.group(1)))
+        headline_level = AlertLevel(int(m.group(1)))
 
-    if level == AlertLevel.NONE:
-        log.debug("HTML: žiadna aktívna výstraha detekovaná")
-        return []
+    for table in tree.xpath("//table"):
+        for tr in table.xpath(".//tr"):
+            cells = ["".join(td.itertext()).strip() for td in tr.xpath("./td|./th")]
+            if len(cells) < 3:
+                continue
 
-    # Skúsime nájsť konkrétne javy z tabuliek / legendy
-    events_found = set()
-    for key, nice in EVENT_MAP.items():
-        if key in page_text.lower():
-            events_found.add(nice)
+            name = ""
+            for c in cells[:3]:
+                if c and not c.isdigit() and c not in ("Región", "Jav", "0"):
+                    name = c
+                    break
+            if not name or _is_kraj_row(name):
+                continue
 
-    if not events_found:
-        events_found.add("Výstraha")
+            district = _normalize_district(name)
+            level_num = _max_level_from_cells(cells)
+            if level_num < 1:
+                continue
 
-    # Pre jednoduchosť vytvoríme jednu súhrnnú výstrahu
-    # (CAP poskytuje oveľa lepšie detaily)
-    identifier = f"HTML-{now.strftime('%Y%m%d%H')}"
-    headline = f"SHMÚ výstraha {level.value}. stupňa"
-    description = f"Aktívne javy: {', '.join(sorted(events_found))}"
+            level = AlertLevel(level_num)
+            safe = re.sub(r"[^A-Za-z0-9]", "", district)[:12] or "OKR"
+            identifier = f"HTML-{now.strftime('%Y%m%d')}-{safe}"
 
-    alerts.append(Alert(
-        identifier=identifier,
-        event="/".join(sorted(events_found)[:3]),
-        level=level,
-        headline=headline,
-        description=description,
-        areas=["Slovensko"],
-        regions=[],
-        effective=now - timedelta(hours=1),
-        expires=now + timedelta(hours=12),
-        sent=now,
-        source="HTML",
-    ))
+            alerts.append(Alert(
+                identifier=identifier,
+                event="Výstraha",
+                level=level,
+                headline=f"SHMÚ {level.color_sk} – {district}",
+                description=f"Výstraha {level.value}. stupňa pre okres {district}",
+                areas=[district],
+                regions=[],
+                effective=now - timedelta(hours=1),
+                expires=now + timedelta(hours=12),
+                sent=now,
+                source="HTML",
+            ))
+            log.info("HTML: okres %s → stupeň %s", district, level.color_sk)
 
-    log.info("HTML fallback: nájdená výstraha úrovne %s", level.color_sk)
-    return alerts
+    if not alerts and headline_level != AlertLevel.NONE:
+        log.warning(
+            "HTML tabuľka bez okresov so stupňom ≥ 1 (nadpis: %s) – nič nevysielam",
+            headline_level.color_sk,
+        )
+
+    by_area: dict[str, Alert] = {}
+    for a in alerts:
+        key = a.areas[0].lower() if a.areas else a.identifier
+        prev = by_area.get(key)
+        if prev is None or a.level > prev.level:
+            by_area[key] = a
+
+    result = list(by_area.values())
+    log.info("HTML fallback: %d okresných výstrah", len(result))
+    return result
