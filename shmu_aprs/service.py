@@ -81,8 +81,8 @@ class ShmuAprsService:
             log.debug("systemd notify zlyhal: %s", e)
 
     def _lead_hours(self) -> float:
-        """0 = vysielať až od začiatku platnosti (effective)."""
-        return float(self.cfg.get("beacon", {}).get("lead_hours", 0))
+        """Hodiny pred effective už vysielať (default 12)."""
+        return float(self.cfg.get("beacon", {}).get("lead_hours", 12))
 
     @staticmethod
     def _is_national(alert: Alert) -> bool:
