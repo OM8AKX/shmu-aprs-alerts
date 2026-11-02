@@ -65,7 +65,6 @@ class Alert:
         now: Optional[datetime] = None,
         lead_hours: float = 12.0,
     ) -> bool:
-        """True v okne [effective - lead_hours, expires]."""
         now = now or datetime.now(timezone.utc)
         if self.expires and now > self.expires:
             return False
@@ -88,33 +87,42 @@ class Alert:
             return "\\", "W"
         return "\\", "<"
 
-    def short_comment(self, max_len: int = 43, district: str = "") -> str:
-        """Komentár: farba, jav, okres + dátum a čas platnosti výstrahy."""
+    def short_comment(self, max_len: int = 67, district: str = "") -> str:
+        """Celá platnosť výstrahy (všetky dni): ŽLTÁ KE Vietor 02.11 08:00-04.11 18:00"""
         color = self.level.color_sk.upper()
         place = district or (",".join(self.areas[:2]) if self.areas else "SK")
+
         validity = ""
         if self.effective or self.expires:
             eff = self.effective.astimezone() if self.effective else None
             exp = self.expires.astimezone() if self.expires else None
             if eff and exp:
-                if eff.date() == exp.date():
-                    validity = (
-                        f" {eff.strftime('%d.%m')} "
-                        f"{eff.strftime('%H:%M')}-{exp.strftime('%H:%M')}"
-                    )
-                else:
-                    validity = (
-                        f" {eff.strftime('%d.%m %H:%M')}"
-                        f"-{exp.strftime('%d.%m %H:%M')}"
-                    )
+                validity = (
+                    f"{eff.strftime('%d.%m %H:%M')}"
+                    f"-{exp.strftime('%d.%m %H:%M')}"
+                )
             elif exp:
-                validity = f" do {exp.strftime('%d.%m %H:%M')}"
+                validity = f"do {exp.strftime('%d.%m %H:%M')}"
             elif eff:
-                validity = f" od {eff.strftime('%d.%m %H:%M')}"
-        base = f"{color} {self.event} {place}{validity}"
-        if len(base) > max_len:
-            base = base[: max_len - 1] + "…"
-        return base
+                validity = f"od {eff.strftime('%d.%m %H:%M')}"
+
+        head = f"{color} {place}"
+        if validity:
+            reserved = len(head) + 1 + len(validity) + 1
+            room = max_len - reserved
+            event = (self.event or "Výstraha").strip()
+            if room < 3:
+                base = f"{color} {validity}"
+            elif len(event) > room:
+                event = event[: max(room - 1, 1)] + "…"
+                base = f"{head} {event} {validity}"
+            else:
+                base = f"{head} {event} {validity}"
+        else:
+            base = f"{head} {self.event}"
+            if len(base) > max_len:
+                base = base[: max_len - 1] + "…"
+        return base[:max_len]
 
     def full_text(self) -> str:
         parts = [f"SHMU {self.level.color_sk.upper()} {self.level.value}.st.", self.event]
