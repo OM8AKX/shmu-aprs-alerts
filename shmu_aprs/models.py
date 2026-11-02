@@ -89,20 +89,28 @@ class Alert:
         return "\\", "<"
 
     def short_comment(self, max_len: int = 43, district: str = "") -> str:
-        """Komentár pre APRS objekt vrátane platnosti výstrahy."""
+        """Komentár: farba, jav, okres + dátum a čas platnosti výstrahy."""
         color = self.level.color_sk.upper()
         place = district or (",".join(self.areas[:2]) if self.areas else "SK")
         validity = ""
-        if self.expires:
-            exp = self.expires.astimezone()
-            if self.effective:
-                eff = self.effective.astimezone()
+        if self.effective or self.expires:
+            eff = self.effective.astimezone() if self.effective else None
+            exp = self.expires.astimezone() if self.expires else None
+            if eff and exp:
                 if eff.date() == exp.date():
-                    validity = f" {eff.strftime('%H:%M')}-{exp.strftime('%H:%M')}"
+                    validity = (
+                        f" {eff.strftime('%d.%m')} "
+                        f"{eff.strftime('%H:%M')}-{exp.strftime('%H:%M')}"
+                    )
                 else:
-                    validity = f" do {exp.strftime('%d.%m %H:%M')}"
-            else:
+                    validity = (
+                        f" {eff.strftime('%d.%m %H:%M')}"
+                        f"-{exp.strftime('%d.%m %H:%M')}"
+                    )
+            elif exp:
                 validity = f" do {exp.strftime('%d.%m %H:%M')}"
+            elif eff:
+                validity = f" od {eff.strftime('%d.%m %H:%M')}"
         base = f"{color} {self.event} {place}{validity}"
         if len(base) > max_len:
             base = base[: max_len - 1] + "…"
