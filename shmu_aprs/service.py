@@ -82,8 +82,22 @@ class ShmuAprsService:
             log.debug("systemd notify zlyhal: %s", e)
 
     def _lead_hours(self) -> float:
-        """Hodiny pred effective, kedy už začať vysielať výstrahu."""
         return float(self.cfg.get("beacon", {}).get("lead_hours", 12))
+
+    @staticmethod
+    def _is_national(alert: Alert) -> bool:
+        """Celoslovenská / bez konkrétneho okresu (HTML fallback)."""
+        if not alert.areas and not alert.regions:
+            return True
+        national_kw = (
+            "slovensko", "slovensk", "celoslovensk", "celá sr", "cela sr",
+            "nationwide", "whole country", "all regions",
+        )
+        for area in alert.areas:
+            low = area.lower()
+            if any(k in low for k in national_kw):
+                return True
+        return False
 
     def _filter_alerts(self, alerts: List[Alert]) -> List[Alert]:
         flt = self.cfg.get("filter", {})
@@ -91,15 +105,33 @@ class ShmuAprsService:
         districts = [d.lower() for d in flt.get("districts", [])]
         min_level = AlertLevel(flt.get("min_level", 1))
         lead = self._lead_hours()
+
         result = []
         for a in alerts:
             if a.level < min_level:
+                log.debug("Filter: drop %s – level %s < min %s", a.identifier, a.level, min_level)
                 continue
             if not a.is_active(lead_hours=lead):
+                log.debug("Filter: drop %s – mimo lead/expires okna", a.identifier)
                 continue
+
             if not regions and not districts:
                 result.append(a)
                 continue
+
+            # Celoslovenská (HTML) → mapuj na okresy z configu
+            if self._is_national(a):
+                if districts:
+                    a.areas = list(flt.get("districts", []))
+                if regions and not a.regions:
+                    a.regions = list(flt.get("regions", []))
+                log.info(
+                    "Filter: celoslovenská výstraha %s → okresy %s",
+                    a.event, a.areas or a.regions,
+                )
+                result.append(a)
+                continue
+
             match_region = bool(regions & set(r.upper() for r in a.regions))
             match_district = False
             if districts:
@@ -108,10 +140,16 @@ class ShmuAprsService:
                     if any(d in low for d in districts):
                         match_district = True
                         break
+
             if match_region or match_district:
                 result.append(a)
-            elif not a.regions and not a.areas:
-                result.append(a)
+            else:
+                log.debug(
+                    "Filter: drop %s – areas=%s regions=%s",
+                    a.identifier, a.areas, a.regions,
+                )
+
+        log.info("Po filtri: %d výstrah (z %d)", len(result), len(alerts))
         return result
 
     def _poll_alerts(self) -> List[Alert]:
@@ -124,13 +162,16 @@ class ShmuAprsService:
                 log.info("CAP: načítaných %d výstrah", len(alerts))
             except Exception as e:
                 log.exception("Chyba CAP: %s", e)
+
         if not alerts and sources.get("use_html_fallback", True):
             html_url = sources.get("html_url")
             if html_url:
                 try:
                     alerts = fetch_html_alerts(html_url, self.session)
+                    log.info("HTML fallback: načítaných %d výstrah (pred filtrom)", len(alerts))
                 except Exception as e:
                     log.exception("Chyba HTML fallback: %s", e)
+
         return self._filter_alerts(alerts)
 
     def _beacon_needed(self) -> bool:
@@ -142,7 +183,6 @@ class ShmuAprsService:
         return datetime.now(timezone.utc) - self._last_poll >= interval
 
     def _send_or_update(self, alerts: List[Alert]) -> None:
-        """Jeden APRS objekt do stredu každého okresu, na ktorý sa výstraha vzťahuje."""
         now = datetime.now(timezone.utc)
         seen: Set[str] = set()
         lead = self._lead_hours()
@@ -197,15 +237,11 @@ class ShmuAprsService:
                 else:
                     if positions:
                         lat, lon = positions[0][1], positions[0][2]
-                log.info("Zrušujem objekt %s (expirácia/odstránenie)", obj.object_name)
+                log.info("Zrušujem objekt %s", obj.object_name)
                 if self.tx:
                     self.tx.send_object(
-                        obj.alert,
-                        lat=lat,
-                        lon=lon,
-                        alive=False,
-                        object_name=obj.object_name,
-                        district_label=district_code,
+                        obj.alert, lat=lat, lon=lon, alive=False,
+                        object_name=obj.object_name, district_label=district_code,
                     )
                 obj.kill_sent = True
             to_remove.append(key)
@@ -285,12 +321,8 @@ class ShmuAprsService:
                 if positions:
                     lat, lon = positions[0][1], positions[0][2]
             self.tx.send_object(
-                obj.alert,
-                lat=lat,
-                lon=lon,
-                alive=False,
-                object_name=obj.object_name,
-                district_label=district_code,
+                obj.alert, lat=lat, lon=lon, alive=False,
+                object_name=obj.object_name, district_label=district_code,
             )
         if self.tx:
             self.tx.disconnect()
