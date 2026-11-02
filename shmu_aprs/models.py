@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from enum import IntEnum
 from typing import List, Optional, Tuple
-from zoneinfo import ZoneInfo
 
 
 class AlertLevel(IntEnum):
@@ -69,7 +68,7 @@ class Alert:
     certainty: str = ""
     source: str = "SHMU"
 
-    def is_active(self, now: Optional[datetime] = None, lead_hours: float = 0.0) -> bool:
+    def is_active(self, now: Optional[datetime] = None, lead_hours: float = 12.0) -> bool:
         now = now or datetime.now(timezone.utc)
         if self.expires and now > self.expires:
             return False
@@ -93,29 +92,18 @@ class Alert:
         return "\\", "<"
 
     def short_comment(self, max_len: int = 67, district: str = "") -> str:
-        """Celý rozsah platnosti: Výstraha 1.st. KE Vietor 02.11 08:00-04.11 18:00"""
         degree = self.level.degree_short
         place = district or (",".join(self.areas[:2]) if self.areas else "SK")
-
         validity = ""
         if self.effective or self.expires:
-            try:
-                tz = ZoneInfo("Europe/Bratislava")
-            except Exception:
-                tz = None
-
-            def _loc(dt):
-                return dt.astimezone(tz) if tz else dt.astimezone()
-
-            eff = _loc(self.effective) if self.effective else None
-            exp = _loc(self.expires) if self.expires else None
+            eff = self.effective.astimezone() if self.effective else None
+            exp = self.expires.astimezone() if self.expires else None
             if eff and exp:
                 validity = f"{eff.strftime('%d.%m %H:%M')}-{exp.strftime('%d.%m %H:%M')}"
             elif exp:
                 validity = f"do {exp.strftime('%d.%m %H:%M')}"
             elif eff:
                 validity = f"od {eff.strftime('%d.%m %H:%M')}"
-
         head = f"Výstraha {degree} {place}"
         if validity:
             reserved = len(head) + 1 + len(validity) + 1
@@ -139,16 +127,7 @@ class Alert:
         parts = [f"SHMU výstraha {self.level.degree_sk}", self.event]
         if self.areas:
             parts.append(" / ".join(self.areas[:4]))
-        if self.effective and self.expires:
-            try:
-                tz = ZoneInfo("Europe/Bratislava")
-                eff = self.effective.astimezone(tz)
-                exp = self.expires.astimezone(tz)
-            except Exception:
-                eff = self.effective.astimezone()
-                exp = self.expires.astimezone()
-            parts.append(f"{eff.strftime('%d.%m.%Y %H:%M')}–{exp.strftime('%d.%m.%Y %H:%M')}")
-        elif self.expires:
+        if self.expires:
             parts.append(f"do {self.expires.astimezone().strftime('%d.%m %H:%M')}")
         return " | ".join(parts)
 
