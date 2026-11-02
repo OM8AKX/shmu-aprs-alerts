@@ -78,7 +78,6 @@ class AprsTransmitter:
         object_name: str | None = None,
         district_label: str = "",
     ) -> bool:
-        """Pošle APRS Object Report. lat/lon = stred okresu."""
         name = object_name or alert.object_name(district_label)
         now = datetime.now(timezone.utc)
         ts = now.strftime("%d%H%M") + "z"
@@ -86,12 +85,13 @@ class AprsTransmitter:
         symbol_table, symbol_code = alert.aprs_symbol()
         live_char = "_" if not alive else "*"
 
-        comment = alert.short_comment(36, district=district_label or "")
+        # Až 67 znakov – celá platnosť (viac dní) sa nezreže
+        comment = alert.short_comment(67, district=district_label or "")
         if alert.level == AlertLevel.RED:
             comment = "!!! " + comment
         elif alert.level == AlertLevel.ORANGE:
             comment = "!! " + comment
-        comment = comment[:43]
+        comment = comment[:67]
 
         obj_name = name.ljust(9)[:9]
         info = f";{obj_name}{live_char}{ts}{lat_s}{symbol_table}{lon_s}{symbol_code}{comment}"
