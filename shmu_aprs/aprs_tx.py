@@ -85,13 +85,7 @@ class AprsTransmitter:
         symbol_table, symbol_code = alert.aprs_symbol()
         live_char = "_" if not alive else "*"
 
-        # Až 67 znakov – celá platnosť (viac dní) sa nezreže
-        comment = alert.short_comment(67, district=district_label or "")
-        if alert.level == AlertLevel.RED:
-            comment = "!!! " + comment
-        elif alert.level == AlertLevel.ORANGE:
-            comment = "!! " + comment
-        comment = comment[:67]
+        comment = alert.short_comment(67, district=district_label or "")[:67]
 
         obj_name = name.ljust(9)[:9]
         info = f";{obj_name}{live_char}{ts}{lat_s}{symbol_table}{lon_s}{symbol_code}{comment}"
