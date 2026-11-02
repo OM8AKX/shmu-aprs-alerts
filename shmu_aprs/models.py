@@ -68,7 +68,8 @@ class Alert:
     certainty: str = ""
     source: str = "SHMU"
 
-    def is_active(self, now: Optional[datetime] = None, lead_hours: float = 12.0) -> bool:
+    def is_active(self, now: Optional[datetime] = None, lead_hours: float = 0.0) -> bool:
+        """Aktívna až od effective (lead_hours=0) do expires."""
         now = now or datetime.now(timezone.utc)
         if self.expires and now > self.expires:
             return False
@@ -92,10 +93,8 @@ class Alert:
         return "\\", "<"
 
     def short_comment(self, max_len: int = 67, district: str = "") -> str:
-        """Výstraha 1.st. KE Vietor 02.11 08:00-04.11 18:00"""
         degree = self.level.degree_short
         place = district or (",".join(self.areas[:2]) if self.areas else "SK")
-
         validity = ""
         if self.effective or self.expires:
             eff = self.effective.astimezone() if self.effective else None
@@ -106,7 +105,6 @@ class Alert:
                 validity = f"do {exp.strftime('%d.%m %H:%M')}"
             elif eff:
                 validity = f"od {eff.strftime('%d.%m %H:%M')}"
-
         head = f"Výstraha {degree} {place}"
         if validity:
             reserved = len(head) + 1 + len(validity) + 1
