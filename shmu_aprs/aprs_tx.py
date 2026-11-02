@@ -85,14 +85,14 @@ class AprsTransmitter:
         lat_s, lon_s = _deg_to_aprs(lat, lon)
         symbol_table, symbol_code = alert.aprs_symbol()
         live_char = "_" if not alive else "*"
-        comment = alert.short_comment(40)
-        if district_label:
-            color = alert.level.color_sk.upper()
-            comment = f"{color} {alert.event} {district_label}"[:40]
+
+        comment = alert.short_comment(36, district=district_label or "")
         if alert.level == AlertLevel.RED:
             comment = "!!! " + comment
         elif alert.level == AlertLevel.ORANGE:
             comment = "!! " + comment
+        comment = comment[:43]
+
         obj_name = name.ljust(9)[:9]
         info = f";{obj_name}{live_char}{ts}{lat_s}{symbol_table}{lon_s}{symbol_code}{comment}"
         packet = f"{self.callsign}>AP{self.software},TCPIP*:{info}"
