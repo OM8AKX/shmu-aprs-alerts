@@ -34,7 +34,6 @@ class ShmuAprsService:
         self._last_beacon = datetime.min.replace(tzinfo=timezone.utc)
         self._last_poll = datetime.min.replace(tzinfo=timezone.utc)
         self._last_watchdog = time.monotonic()
-
         self.watchdog_enabled = self.cfg.get("watchdog", {}).get("enabled", False)
         self.watchdog_interval = self.cfg.get("watchdog", {}).get("interval_seconds", 60)
         self._notify_socket = os.environ.get("NOTIFY_SOCKET")
@@ -82,16 +81,15 @@ class ShmuAprsService:
             log.debug("systemd notify zlyhal: %s", e)
 
     def _lead_hours(self) -> float:
-        return float(self.cfg.get("beacon", {}).get("lead_hours", 12))
+        """0 = vysielať až od začiatku platnosti (effective)."""
+        return float(self.cfg.get("beacon", {}).get("lead_hours", 0))
 
     @staticmethod
     def _is_national(alert: Alert) -> bool:
         if not alert.areas and not alert.regions:
             return True
-        national_kw = (
-            "slovensko", "slovensk", "celoslovensk", "celá sr", "cela sr",
-            "nationwide", "whole country", "all regions",
-        )
+        national_kw = ("slovensko", "slovensk", "celoslovensk", "celá sr", "cela sr",
+                       "nationwide", "whole country", "all regions")
         for area in alert.areas:
             low = area.lower()
             if any(k in low for k in national_kw):
@@ -104,22 +102,18 @@ class ShmuAprsService:
         districts = [d.lower() for d in flt.get("districts", [])]
         min_level = AlertLevel(flt.get("min_level", 1))
         lead = self._lead_hours()
-
         result = []
         for a in alerts:
             if a.level < min_level:
                 continue
             if not a.is_active(lead_hours=lead):
                 continue
-
             if not regions and not districts:
                 result.append(a)
                 continue
-
             if self._is_national(a):
                 log.info("Filter: preskakujem celoslovenskú %s (iba okresy)", a.event)
                 continue
-
             match_district = False
             if districts:
                 for area in a.areas:
@@ -127,16 +121,13 @@ class ShmuAprsService:
                     if any(d in low for d in districts):
                         match_district = True
                         break
-
             if districts:
                 if match_district:
                     result.append(a)
                 continue
-
             match_region = bool(regions & set(r.upper() for r in a.regions))
             if match_region:
                 result.append(a)
-
         log.info("Po filtri: %d výstrah (z %d)", len(result), len(alerts))
         return result
 
@@ -150,7 +141,6 @@ class ShmuAprsService:
                 log.info("CAP: načítaných %d výstrah", len(alerts))
             except Exception as e:
                 log.exception("Chyba CAP: %s", e)
-
         if not alerts and sources.get("use_html_fallback", True):
             html_url = sources.get("html_url")
             if html_url:
@@ -160,7 +150,6 @@ class ShmuAprsService:
                     log.info("HTML fallback: načítaných %d výstrah (pred filtrom)", len(alerts))
                 except Exception as e:
                     log.exception("Chyba HTML fallback: %s", e)
-
         return self._filter_alerts(alerts)
 
     def _beacon_needed(self) -> bool:
@@ -175,7 +164,6 @@ class ShmuAprsService:
         now = datetime.now(timezone.utc)
         seen: Set[str] = set()
         lead = self._lead_hours()
-
         for alert in alerts:
             positions = resolve_alert_positions(alert.areas, alert.regions)
             for district_code, lat, lon in positions:
@@ -183,22 +171,14 @@ class ShmuAprsService:
                 seen.add(key)
                 obj = self.active.get(key)
                 obj_name = alert.object_name(district_code)
-
                 if obj is None:
-                    obj = ActiveObject(
-                        alert=alert,
-                        object_name=obj_name,
-                        last_sent=datetime.min.replace(tzinfo=timezone.utc),
-                    )
+                    obj = ActiveObject(alert=alert, object_name=obj_name,
+                                       last_sent=datetime.min.replace(tzinfo=timezone.utc))
                     self.active[key] = obj
-                    log.info(
-                        "Nová výstraha: %s (%s) @ %s [%.3f, %.3f]",
-                        alert.event, alert.level.color_sk, district_code, lat, lon,
-                    )
-
+                    log.info("Nová výstraha: %s (%s) @ %s [%.3f, %.3f]",
+                             alert.event, alert.level.color_sk, district_code, lat, lon)
                 obj.alert = alert
                 obj.object_name = obj_name
-
                 if self._beacon_needed() or (now - obj.last_sent) > timedelta(minutes=25):
                     if self.tx and self.tx.send_object(
                         alert, lat=lat, lon=lon, alive=True,
@@ -206,7 +186,6 @@ class ShmuAprsService:
                     ):
                         obj.last_sent = now
                         obj.kill_sent = False
-
         to_remove = []
         for key, obj in self.active.items():
             if key in seen and obj.alert.is_active(now, lead_hours=lead):
@@ -224,16 +203,12 @@ class ShmuAprsService:
                         lat, lon = positions[0][1], positions[0][2]
                 log.info("Zrušujem objekt %s", obj.object_name)
                 if self.tx:
-                    self.tx.send_object(
-                        obj.alert, lat=lat, lon=lon, alive=False,
-                        object_name=obj.object_name, district_label=district_code,
-                    )
+                    self.tx.send_object(obj.alert, lat=lat, lon=lon, alive=False,
+                                        object_name=obj.object_name, district_label=district_code)
                 obj.kill_sent = True
             to_remove.append(key)
-
         for key in to_remove:
             del self.active[key]
-
         if self._beacon_needed():
             self._last_beacon = now
             if self.active and self.tx:
@@ -244,11 +219,9 @@ class ShmuAprsService:
     def run(self) -> None:
         self._setup_logging()
         log.info("=== SHMÚ APRS Alerts service starting ===")
-
         aprs_cfg = self.cfg["aprs"]
         self.tx = AprsTransmitter(
-            callsign=aprs_cfg["callsign"],
-            passcode=aprs_cfg["passcode"],
+            callsign=aprs_cfg["callsign"], passcode=aprs_cfg["passcode"],
             server=aprs_cfg.get("server", "euro.aprs2.net"),
             port=aprs_cfg.get("port", 14580),
             software=aprs_cfg.get("software", "SHMU"),
@@ -257,25 +230,18 @@ class ShmuAprsService:
             self.tx.connect()
         except Exception as e:
             log.error("Nepodarilo sa pripojiť k APRS-IS: %s", e)
-
         self._running = True
         self._notify("READY=1")
-
         def _handle_signal(signum, frame):
             log.info("Prijatý signál %s – ukončujem", signum)
             self._running = False
-
         signal.signal(signal.SIGTERM, _handle_signal)
         signal.signal(signal.SIGINT, _handle_signal)
-
-        log.info(
-            "Služba beží. Filter: regions=%s districts=%s min_level=%s lead_hours=%s",
-            self.cfg.get("filter", {}).get("regions"),
-            self.cfg.get("filter", {}).get("districts"),
-            self.cfg.get("filter", {}).get("min_level"),
-            self._lead_hours(),
-        )
-
+        log.info("Služba beží. Filter: regions=%s districts=%s min_level=%s lead_hours=%s",
+                 self.cfg.get("filter", {}).get("regions"),
+                 self.cfg.get("filter", {}).get("districts"),
+                 self.cfg.get("filter", {}).get("min_level"),
+                 self._lead_hours())
         while self._running:
             try:
                 if self._poll_needed():
@@ -289,7 +255,6 @@ class ShmuAprsService:
             except Exception:
                 log.exception("Neočekávaná chyba v hlavnej slučke")
             time.sleep(5)
-
         log.info("Ukončujem – ruším aktívne objekty…")
         self._notify("STOPPING=1")
         for key, obj in list(self.active.items()):
@@ -305,10 +270,8 @@ class ShmuAprsService:
             else:
                 if positions:
                     lat, lon = positions[0][1], positions[0][2]
-            self.tx.send_object(
-                obj.alert, lat=lat, lon=lon, alive=False,
-                object_name=obj.object_name, district_label=district_code,
-            )
+            self.tx.send_object(obj.alert, lat=lat, lon=lon, alive=False,
+                                object_name=obj.object_name, district_label=district_code)
         if self.tx:
             self.tx.disconnect()
         log.info("Služba ukončená")
