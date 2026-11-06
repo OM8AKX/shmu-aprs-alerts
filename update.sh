@@ -52,6 +52,12 @@ if ! command -v git >/dev/null 2>&1; then
   apt-get install -y -qq git
 fi
 
+if ! command -v rsync >/dev/null 2>&1; then
+  log "Inštalujem rsync…"
+  apt-get update -qq
+  apt-get install -y -qq rsync
+fi
+
 rm -rf "$WORKDIR"
 log "Sťahujem $REPO_URL ($BRANCH)…"
 git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$WORKDIR"
@@ -63,9 +69,12 @@ LOCAL_SHA=""
 if [[ -f "$PREFIX/.git-revision" ]]; then
   LOCAL_SHA=$(cat "$PREFIX/.git-revision" 2>/dev/null || true)
 fi
-# fallback: skús z vnoreného .git ak existuje
 if [[ -z "$LOCAL_SHA" && -d "$PREFIX/.git" ]]; then
   LOCAL_SHA=$(git -C "$PREFIX" rev-parse HEAD 2>/dev/null || true)
+fi
+LOCAL_SHORT="none"
+if [[ -n "$LOCAL_SHA" ]]; then
+  LOCAL_SHORT=${LOCAL_SHA:0:7}
 fi
 
 if [[ -n "$LOCAL_SHA" && "$LOCAL_SHA" == "$REMOTE_SHA" ]]; then
@@ -75,23 +84,24 @@ if [[ -n "$LOCAL_SHA" && "$LOCAL_SHA" == "$REMOTE_SHA" ]]; then
 fi
 
 if [[ $CHECK_ONLY -eq 1 ]]; then
-  log "Dostupná nová verzia: ${LOCAL_SHA:0:7:-unknown} → $REMOTE_SHORT"
+  log "Dostupná nová verzia: $LOCAL_SHORT → $REMOTE_SHORT"
   rm -rf "$WORKDIR"
   exit 2
 fi
 
-log "Aktualizujem $PREFIX  (${LOCAL_SHA:0:7:-none} → $REMOTE_SHORT)"
+log "Aktualizujem $PREFIX  ($LOCAL_SHORT → $REMOTE_SHORT)"
 
-# Záloha configu nie je potrebná – žije v $CONFIG_DIR mimo PREFIX
 mkdir -p "$PREFIX"
 
-# Skopíruj kód (bez .git)
+# Skopíruj kód (bez .git a venv; config ostáva v /etc)
 rsync -a --delete \
   --exclude '.git' \
   --exclude 'venv' \
   --exclude '__pycache__' \
   --exclude '*.pyc' \
   --exclude 'config/config.yaml' \
+  --exclude '.git-revision' \
+  --exclude 'requirements.txt.bak' \
   "$WORKDIR/" "$PREFIX/"
 
 echo "$REMOTE_SHA" > "$PREFIX/.git-revision"
@@ -106,7 +116,14 @@ if [[ ! -x "$PREFIX/venv/bin/python" ]]; then
   FORCE_DEPS=1
 fi
 
-if [[ $FORCE_DEPS -eq 1 ]] || ! cmp -s "$WORKDIR/requirements.txt" "$PREFIX/requirements.txt.bak" 2>/dev/null; then
+NEED_DEPS=$FORCE_DEPS
+if [[ $NEED_DEPS -eq 0 ]]; then
+  if [[ ! -f "$PREFIX/requirements.txt.bak" ]] || ! cmp -s "$PREFIX/requirements.txt" "$PREFIX/requirements.txt.bak"; then
+    NEED_DEPS=1
+  fi
+fi
+
+if [[ $NEED_DEPS -eq 1 ]]; then
   log "Aktualizujem Python závislosti…"
   sudo -u "$SERVICE_USER" "$PREFIX/venv/bin/pip" install -q --upgrade pip wheel setuptools
   sudo -u "$SERVICE_USER" "$PREFIX/venv/bin/pip" install -q -r "$PREFIX/requirements.txt"
@@ -114,6 +131,7 @@ if [[ $FORCE_DEPS -eq 1 ]] || ! cmp -s "$WORKDIR/requirements.txt" "$PREFIX/requ
 fi
 
 chown -R "$SERVICE_USER:$SERVICE_USER" "$PREFIX"
+chmod 755 "$PREFIX/update.sh" 2>/dev/null || true
 
 # systemd unit (ak sa zmenil)
 if [[ -f "$PREFIX/systemd/${SERVICE_NAME}.service" ]]; then
