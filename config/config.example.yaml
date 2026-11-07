@@ -15,15 +15,29 @@ filter:
     - "KSK"
     - "PSK"
   districts:
-    - "Košice"
+    # Košický kraj (KSK)
     - "Košice mesto"
     - "Košice okolie"
-    - "Prešov"
-    - "Poprad"
-    - "Spišská Nová Ves"
+    - "Gelnica"
     - "Michalovce"
-    - "Humenné"
+    - "Rožňava"
+    - "Sobrance"
+    - "Spišská Nová Ves"
+    - "Trebišov"
+    # Prešovský kraj (PSK)
+    - "Prešov"
     - "Bardejov"
+    - "Humenné"
+    - "Kežmarok"
+    - "Levoča"
+    - "Medzilaborce"
+    - "Poprad"
+    - "Sabinov"
+    - "Snina"
+    - "Stará Ľubovňa"
+    - "Stropkov"
+    - "Svidník"
+    - "Vranov nad Topľou"
   min_level: 1
 
 beacon:
