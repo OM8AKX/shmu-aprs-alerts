@@ -14,6 +14,8 @@ filter:
   regions:
     - "KSK"
     - "PSK"
+    - "ZSK"
+    - "BBSK"
   districts:
     # Košický kraj (KSK)
     - "Košice mesto"
@@ -38,6 +40,32 @@ filter:
     - "Stropkov"
     - "Svidník"
     - "Vranov nad Topľou"
+    # Žilinský kraj (ZSK)
+    - "Žilina"
+    - "Bytča"
+    - "Čadca"
+    - "Dolný Kubín"
+    - "Kysucké Nové Mesto"
+    - "Liptovský Mikuláš"
+    - "Martin"
+    - "Námestovo"
+    - "Ružomberok"
+    - "Turčianske Teplice"
+    - "Tvrdošín"
+    # Banskobystrický kraj (BBSK)
+    - "Banská Bystrica"
+    - "Banská Štiavnica"
+    - "Brezno"
+    - "Detva"
+    - "Krupina"
+    - "Lučenec"
+    - "Poltár"
+    - "Revúca"
+    - "Rimavská Sobota"
+    - "Veľký Krtíš"
+    - "Zvolen"
+    - "Žarnovica"
+    - "Žiar nad Hronom"
   min_level: 1
 
 beacon:
