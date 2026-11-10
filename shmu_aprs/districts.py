@@ -159,9 +159,9 @@ REGION_CENTERS: Dict[str, Tuple[float, float]] = {
 
 DEFAULT_CENTER = (48.67, 19.70)
 
-# Posun pri viacerých výstrahách v tom istom okrese (~1 km na kruhu)
-_OFFSET_BASE_DEG = 0.009
-_OFFSET_RING_DEG = 0.006
+# Posun pri viacerých výstrahách v tom istom okrese (~2.8 km / ďalší prstenec ~4.4 km)
+_OFFSET_BASE_DEG = 0.025
+_OFFSET_RING_DEG = 0.015
 
 
 def _norm(name: str) -> str:
@@ -186,7 +186,7 @@ def short_code(district_key: str) -> str:
 def offset_position(lat: float, lon: float, index: int) -> Tuple[float, float]:
     """Posunie bod okolo stredu okresu, aby sa ikony neprekrývali.
 
-    index 0 = stred, 1.. = body na kružnici (~1 km, ďalší prstenec ~1.7 km).
+    index 0 = stred, 1.. = body na kružnici (~2.8 km, ďalší prstenec ~4.4 km).
     """
     if index <= 0:
         return lat, lon
