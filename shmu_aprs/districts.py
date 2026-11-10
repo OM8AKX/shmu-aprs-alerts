@@ -159,9 +159,8 @@ REGION_CENTERS: Dict[str, Tuple[float, float]] = {
 
 DEFAULT_CENTER = (48.67, 19.70)
 
-# Posun pri viacerých výstrahách v tom istom okrese (~2.8 km / ďalší prstenec ~4.4 km)
-_OFFSET_BASE_DEG = 0.025
-_OFFSET_RING_DEG = 0.015
+# ~8 km od stredu – na mape aprs.fi jasne oddelené ikony
+_OFFSET_RADIUS_DEG = 0.072
 
 
 def _norm(name: str) -> str:
@@ -183,17 +182,28 @@ def short_code(district_key: str) -> str:
     return DISTRICT_SHORT.get(district_key, district_key[:4].upper())
 
 
-def offset_position(lat: float, lon: float, index: int) -> Tuple[float, float]:
-    """Posunie bod okolo stredu okresu, aby sa ikony neprekrývali.
+def offset_position(
+    lat: float,
+    lon: float,
+    index: int,
+    total: int = 1,
+) -> Tuple[float, float]:
+    """Rozloží ikony okolo stredu okresu (~8 km), aby sa na mape neprekrývali.
 
-    index 0 = stred, 1.. = body na kružnici (~2.8 km, ďalší prstenec ~4.4 km).
+    Pri total==1 ostane stred. Pri total>1 sú VŠETKY body na kružnici
+    (vrátane prvej), rovnomerne podľa indexu.
     """
-    if index <= 0:
+    if total <= 1 or index < 0:
         return lat, lon
-    ring = (index - 1) // 6
-    pos = (index - 1) % 6
-    radius = _OFFSET_BASE_DEG + _OFFSET_RING_DEG * ring
-    angle = pos * (2.0 * math.pi / 6.0) + ring * 0.3
+    # rovnomerné uhly: 0, 2π/n, 4π/n, …
+    angle = (2.0 * math.pi * index) / total
+    # mierny fázový posun, aby prvá nebola vždy presne na severe
+    angle += math.pi / 12.0
+    radius = _OFFSET_RADIUS_DEG
+    # druhý prstenec pri viac ako 6 ikonách
+    if index >= 6:
+        radius = _OFFSET_RADIUS_DEG * 1.7
+        angle = (2.0 * math.pi * (index - 6)) / max(total - 6, 1)
     dlat = radius * math.cos(angle)
     cos_lat = max(math.cos(math.radians(lat)), 0.3)
     dlon = radius * math.sin(angle) / cos_lat

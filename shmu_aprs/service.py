@@ -164,7 +164,6 @@ class ShmuAprsService:
         now = datetime.now(timezone.utc)
         seen: Set[str] = set()
         lead = self._lead_hours()
-        # Poradie slotov v okrese – stabilné podľa identifier
         by_district: Dict[str, List[tuple]] = {}
         prepared: List[tuple] = []
         for alert in alerts:
@@ -175,15 +174,17 @@ class ShmuAprsService:
                     (key, alert, district_code, lat, lon)
                 )
         for district_code, items in by_district.items():
-            items.sort(key=lambda x: x[0])  # stabilné poradie
+            items.sort(key=lambda x: x[0])
+            total = len(items)
             for slot, (key, alert, code, lat, lon) in enumerate(items):
-                lat2, lon2 = offset_position(lat, lon, slot)
-                prepared.append((key, alert, code, lat2, lon2, slot))
+                lat2, lon2 = offset_position(lat, lon, slot, total=total)
+                prepared.append((key, alert, code, lat2, lon2, slot, total))
 
-        for key, alert, district_code, lat, lon, slot in prepared:
+        for key, alert, district_code, lat, lon, slot, total in prepared:
             seen.add(key)
             obj = self.active.get(key)
             obj_name = alert.object_name(district_code)
+            pos_changed = False
             if obj is None:
                 obj = ActiveObject(
                     alert=alert,
@@ -195,15 +196,27 @@ class ShmuAprsService:
                 )
                 self.active[key] = obj
                 log.info(
-                    "Nová výstraha: %s (%s) @ %s slot=%s [%.4f, %.4f]",
-                    alert.event, alert.level.color_sk, district_code, slot, lat, lon,
+                    "Nová výstraha: %s (%s) @ %s slot=%s/%s [%.4f, %.4f]",
+                    alert.event, alert.level.color_sk, district_code, slot + 1, total, lat, lon,
                 )
+            else:
+                if abs(obj.lat - lat) > 0.0005 or abs(obj.lon - lon) > 0.0005:
+                    pos_changed = True
+                    log.info(
+                        "Posun ikony %s: [%.4f,%.4f] → [%.4f,%.4f] (slot %s/%s)",
+                        obj_name.strip(), obj.lat, obj.lon, lat, lon, slot + 1, total,
+                    )
             obj.alert = alert
             obj.object_name = obj_name
             obj.lat = lat
             obj.lon = lon
             obj.slot = slot
-            if self._beacon_needed() or (now - obj.last_sent) > timedelta(minutes=25):
+            # vždy pri zmene polohy, novom objekte, alebo bežnom beacone
+            if (
+                pos_changed
+                or self._beacon_needed()
+                or (now - obj.last_sent) > timedelta(minutes=25)
+            ):
                 if self.tx and self.tx.send_object(
                     alert, lat=lat, lon=lon, alive=True,
                     object_name=obj_name, district_label=district_code,

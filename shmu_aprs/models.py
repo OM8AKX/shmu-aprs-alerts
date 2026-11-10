@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from enum import IntEnum
@@ -153,13 +154,14 @@ class Alert:
         return " | ".join(parts)
 
     def object_name(self, district_code: str = "") -> str:
-        code = (district_code or "SK")[:4].upper()
+        """Unikátne 9-znakové APRS meno: SH + okres + hash(identifier)."""
+        code = (district_code or "SK")[:3].upper()
+        # hash celého ID + event → stabilné a unikátne aj pri rovnakom okrese
+        raw = f"{self.identifier}|{self.event}"
+        h = hashlib.md5(raw.encode("utf-8")).hexdigest().upper()
+        # SH(2) + code(≤3) + hash → max 9
         rest = 9 - 2 - len(code)
-        if rest < 1:
-            code = code[:3]
-            rest = 4
-        short_id = self.identifier[-rest:] if len(self.identifier) >= rest else self.identifier
-        name = f"SH{code}{short_id}"
+        name = f"SH{code}{h[:rest]}"
         return name[:9].ljust(9)
 
 
