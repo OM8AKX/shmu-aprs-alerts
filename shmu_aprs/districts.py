@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Dict, List, Optional, Tuple
 
 DISTRICT_CENTERS: Dict[str, Tuple[float, float]] = {
@@ -158,6 +159,10 @@ REGION_CENTERS: Dict[str, Tuple[float, float]] = {
 
 DEFAULT_CENTER = (48.67, 19.70)
 
+# Posun pri viacerých výstrahách v tom istom okrese (~1 km na kruhu)
+_OFFSET_BASE_DEG = 0.009
+_OFFSET_RING_DEG = 0.006
+
 
 def _norm(name: str) -> str:
     return " ".join(name.lower().replace("–", "-").replace("—", "-").split())
@@ -176,6 +181,23 @@ def lookup_district(name: str) -> Optional[Tuple[str, float, float]]:
 
 def short_code(district_key: str) -> str:
     return DISTRICT_SHORT.get(district_key, district_key[:4].upper())
+
+
+def offset_position(lat: float, lon: float, index: int) -> Tuple[float, float]:
+    """Posunie bod okolo stredu okresu, aby sa ikony neprekrývali.
+
+    index 0 = stred, 1.. = body na kružnici (~1 km, ďalší prstenec ~1.7 km).
+    """
+    if index <= 0:
+        return lat, lon
+    ring = (index - 1) // 6
+    pos = (index - 1) % 6
+    radius = _OFFSET_BASE_DEG + _OFFSET_RING_DEG * ring
+    angle = pos * (2.0 * math.pi / 6.0) + ring * 0.3
+    dlat = radius * math.cos(angle)
+    cos_lat = max(math.cos(math.radians(lat)), 0.3)
+    dlon = radius * math.sin(angle) / cos_lat
+    return lat + dlat, lon + dlon
 
 
 def resolve_alert_positions(

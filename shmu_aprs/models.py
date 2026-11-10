@@ -169,3 +169,6 @@ class ActiveObject:
     object_name: str
     last_sent: datetime
     kill_sent: bool = False
+    lat: float = 48.67
+    lon: float = 19.70
+    slot: int = 0

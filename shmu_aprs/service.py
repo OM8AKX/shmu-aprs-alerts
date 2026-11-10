@@ -17,7 +17,7 @@ import yaml
 from .aprs_tx import AprsTransmitter
 from .cap_parser import fetch_cap_alerts
 from .html_fallback import fetch_html_alerts
-from .districts import resolve_alert_positions
+from .districts import offset_position, resolve_alert_positions
 from .models import ActiveObject, Alert, AlertLevel
 
 log = logging.getLogger(__name__)
@@ -164,47 +164,66 @@ class ShmuAprsService:
         now = datetime.now(timezone.utc)
         seen: Set[str] = set()
         lead = self._lead_hours()
+        # Poradie slotov v okrese – stabilné podľa identifier
+        by_district: Dict[str, List[tuple]] = {}
+        prepared: List[tuple] = []
         for alert in alerts:
             positions = resolve_alert_positions(alert.areas, alert.regions)
             for district_code, lat, lon in positions:
                 key = f"{alert.identifier}|{district_code}"
-                seen.add(key)
-                obj = self.active.get(key)
-                obj_name = alert.object_name(district_code)
-                if obj is None:
-                    obj = ActiveObject(alert=alert, object_name=obj_name,
-                                       last_sent=datetime.min.replace(tzinfo=timezone.utc))
-                    self.active[key] = obj
-                    log.info("Nová výstraha: %s (%s) @ %s [%.3f, %.3f]",
-                             alert.event, alert.level.color_sk, district_code, lat, lon)
-                obj.alert = alert
-                obj.object_name = obj_name
-                if self._beacon_needed() or (now - obj.last_sent) > timedelta(minutes=25):
-                    if self.tx and self.tx.send_object(
-                        alert, lat=lat, lon=lon, alive=True,
-                        object_name=obj_name, district_label=district_code,
-                    ):
-                        obj.last_sent = now
-                        obj.kill_sent = False
+                by_district.setdefault(district_code, []).append(
+                    (key, alert, district_code, lat, lon)
+                )
+        for district_code, items in by_district.items():
+            items.sort(key=lambda x: x[0])  # stabilné poradie
+            for slot, (key, alert, code, lat, lon) in enumerate(items):
+                lat2, lon2 = offset_position(lat, lon, slot)
+                prepared.append((key, alert, code, lat2, lon2, slot))
+
+        for key, alert, district_code, lat, lon, slot in prepared:
+            seen.add(key)
+            obj = self.active.get(key)
+            obj_name = alert.object_name(district_code)
+            if obj is None:
+                obj = ActiveObject(
+                    alert=alert,
+                    object_name=obj_name,
+                    last_sent=datetime.min.replace(tzinfo=timezone.utc),
+                    lat=lat,
+                    lon=lon,
+                    slot=slot,
+                )
+                self.active[key] = obj
+                log.info(
+                    "Nová výstraha: %s (%s) @ %s slot=%s [%.4f, %.4f]",
+                    alert.event, alert.level.color_sk, district_code, slot, lat, lon,
+                )
+            obj.alert = alert
+            obj.object_name = obj_name
+            obj.lat = lat
+            obj.lon = lon
+            obj.slot = slot
+            if self._beacon_needed() or (now - obj.last_sent) > timedelta(minutes=25):
+                if self.tx and self.tx.send_object(
+                    alert, lat=lat, lon=lon, alive=True,
+                    object_name=obj_name, district_label=district_code,
+                ):
+                    obj.last_sent = now
+                    obj.kill_sent = False
+
         to_remove = []
         for key, obj in self.active.items():
             if key in seen and obj.alert.is_active(now, lead_hours=lead):
                 continue
             if not obj.kill_sent:
                 district_code = key.split("|", 1)[-1] if "|" in key else "SK"
-                positions = resolve_alert_positions(obj.alert.areas, obj.alert.regions)
-                lat, lon = 48.67, 19.70
-                for code, la, lo in positions:
-                    if code == district_code:
-                        lat, lon = la, lo
-                        break
-                else:
-                    if positions:
-                        lat, lon = positions[0][1], positions[0][2]
+                lat, lon = obj.lat, obj.lon
                 log.info("Zrušujem objekt %s", obj.object_name)
                 if self.tx:
-                    self.tx.send_object(obj.alert, lat=lat, lon=lon, alive=False,
-                                        object_name=obj.object_name, district_label=district_code)
+                    self.tx.send_object(
+                        obj.alert, lat=lat, lon=lon, alive=False,
+                        object_name=obj.object_name, district_label=district_code,
+                    )
                 obj.kill_sent = True
             to_remove.append(key)
         for key in to_remove:
@@ -261,17 +280,10 @@ class ShmuAprsService:
             if obj.kill_sent or not self.tx:
                 continue
             district_code = key.split("|", 1)[-1] if "|" in key else "SK"
-            positions = resolve_alert_positions(obj.alert.areas, obj.alert.regions)
-            lat, lon = 48.67, 19.70
-            for code, la, lo in positions:
-                if code == district_code:
-                    lat, lon = la, lo
-                    break
-            else:
-                if positions:
-                    lat, lon = positions[0][1], positions[0][2]
-            self.tx.send_object(obj.alert, lat=lat, lon=lon, alive=False,
-                                object_name=obj.object_name, district_label=district_code)
+            self.tx.send_object(
+                obj.alert, lat=obj.lat, lon=obj.lon, alive=False,
+                object_name=obj.object_name, district_label=district_code,
+            )
         if self.tx:
             self.tx.disconnect()
         log.info("Služba ukončená")
