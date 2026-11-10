@@ -58,22 +58,21 @@ class HydroReading:
     lon: float
     spa_from_icon: bool = False
 
-    def to_alert(self, lifetime_hours: float = 2.0) -> Alert:
+    def to_alert(self) -> Alert:
+        """Alert bez pevnej expirácie – na mape kým SPA trvá (riadi poll)."""
         now = datetime.now(timezone.utc)
-        level = AlertLevel(min(max(self.spa, 0), 3))
-        if self.spa <= 0:
-            level = AlertLevel.NONE
-        event = f"SPA {self.spa}.st. {self.river}" if self.spa else f"Hladina {self.river}"
+        level = AlertLevel(min(max(self.spa, 1), 3))
+        event = f"SPA {self.spa}.st. {self.river}"
         return Alert(
             identifier=f"HYDRO-{self.station_id}",
             event=event,
-            level=level if self.spa else AlertLevel.YELLOW,  # len ak sa vôbec vysiela
+            level=level,
             headline=f"{self.name} – {self.river}: {self.level_cm} cm",
-            description=f"Vodný stav {self.level_cm} cm, SPA {self.spa}. stupeň",
+            description=f"Vodný stav {self.level_cm} cm, SPA {self.spa}. st. (kým trvá stav)",
             areas=[self.name],
             regions=[],
             effective=now - timedelta(minutes=5),
-            expires=now + timedelta(hours=lifetime_hours),
+            expires=None,  # trvanie = kým je SPA v dátach; kill po poklese
             source="SHMU-HYDRO",
         )
 
@@ -83,7 +82,7 @@ def _parse_time(text: str) -> Optional[datetime]:
     for fmt in ("%d.%m.%Y %H:%M", "%d.%m.%Y %H:%M:%S"):
         try:
             dt = datetime.strptime(text, fmt)
-            return dt.replace(tzinfo=timezone.utc)  # SHMÚ lokálny čas ≈ CET; stačí operatívne
+            return dt.replace(tzinfo=timezone.utc)
         except ValueError:
             continue
     return None
@@ -189,14 +188,14 @@ def fetch_hydro_readings(
 def readings_to_alerts(
     readings: List[HydroReading],
     min_spa: int = 1,
-    lifetime_hours: float = 2.0,
+    lifetime_hours: float = 0.0,  # ignorované – trvanie = trvanie SPA stavu
 ) -> List[Alert]:
-    """Iba stanice so SPA >= min_spa."""
+    """Iba stanice so SPA >= min_spa. Objekt žije kým stav trvá."""
     out: List[Alert] = []
     for rd in readings:
         if rd.spa < min_spa:
             continue
-        out.append(rd.to_alert(lifetime_hours=lifetime_hours))
+        out.append(rd.to_alert())
     return out
 
 

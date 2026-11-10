@@ -69,13 +69,13 @@ filter:
   min_level: 1
 
 # Povodňová aktivita (vodomerné stanice SHMÚ)
+# Objekt na mape trvá kým SPA >= min_spa; po poklese sa pošle kill
 hydro:
   enabled: true
   min_spa: 1                 # vysielať od 1. stupňa SPA (1–3)
   url: "https://www.shmu.sk/sk/?page=765"
   # prázdne = všetky preddefinované stanice v hydro.py
   stations: []
-  lifetime_hours: 2
 
 beacon:
   interval_minutes: 30
