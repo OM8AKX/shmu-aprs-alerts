@@ -9,7 +9,7 @@ import sys
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import requests
 import yaml
@@ -17,7 +17,7 @@ import yaml
 from .aprs_tx import AprsTransmitter
 from .cap_parser import fetch_cap_alerts
 from .html_fallback import fetch_html_alerts
-from .districts import offset_position, resolve_alert_positions
+from .districts import offset_position, resolve_alert_positions, spread_collisions
 from .models import ActiveObject, Alert, AlertLevel
 
 log = logging.getLogger(__name__)
@@ -48,9 +48,26 @@ class ShmuAprsService:
         handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
         if log_file:
             try:
+                # radšej do adresára služby – žiadne permission problémy v /var/log
+                log_path = Path(log_file)
+                if str(log_path).startswith("/var/log/") and log_path.name == log_path.name:
+                    alt = Path("/opt/shmu-aprs-alerts/logs") / log_path.name
+                    try:
+                        alt.parent.mkdir(parents=True, exist_ok=True)
+                        log_path = alt
+                    except OSError:
+                        pass
                 from logging.handlers import RotatingFileHandler
-                handlers.append(RotatingFileHandler(
-                    log_file,
+
+                class _SafeRotating(RotatingFileHandler):
+                    def doRollover(self):
+                        try:
+                            super().doRollover()
+                        except PermissionError as e:
+                            print(f"Log rotate skipped: {e}", file=sys.stderr)
+
+                handlers.append(_SafeRotating(
+                    str(log_path),
                     maxBytes=self.cfg.get("logging", {}).get("max_bytes", 1_000_000),
                     backupCount=self.cfg.get("logging", {}).get("backup_count", 3),
                     encoding="utf-8",
@@ -81,7 +98,6 @@ class ShmuAprsService:
             log.debug("systemd notify zlyhal: %s", e)
 
     def _lead_hours(self) -> float:
-        """0 = vysielať až od začiatku platnosti (effective)."""
         return float(self.cfg.get("beacon", {}).get("lead_hours", 0))
 
     @staticmethod
@@ -164,21 +180,34 @@ class ShmuAprsService:
         now = datetime.now(timezone.utc)
         seen: Set[str] = set()
         lead = self._lead_hours()
-        by_district: Dict[str, List[tuple]] = {}
-        prepared: List[tuple] = []
+
+        # group_key = skutočný okres (nie skratka) → správny posun v rámci okresu
+        by_group: Dict[str, List[tuple]] = {}
         for alert in alerts:
             positions = resolve_alert_positions(alert.areas, alert.regions)
-            for district_code, lat, lon in positions:
-                key = f"{alert.identifier}|{district_code}"
-                by_district.setdefault(district_code, []).append(
+            for district_key, district_code, lat, lon in positions:
+                key = f"{alert.identifier}|{district_key}"
+                by_group.setdefault(district_key, []).append(
                     (key, alert, district_code, lat, lon)
                 )
-        for district_code, items in by_district.items():
+
+        prepared: List[Tuple[str, Alert, str, float, float, int, int]] = []
+        for district_key, items in by_group.items():
             items.sort(key=lambda x: x[0])
             total = len(items)
             for slot, (key, alert, code, lat, lon) in enumerate(items):
                 lat2, lon2 = offset_position(lat, lon, slot, total=total)
                 prepared.append((key, alert, code, lat2, lon2, slot, total))
+
+        # globálne rozohnanie kolízií (rôzne okresy s rovnakými/súradnicami blízko seba)
+        if len(prepared) > 1:
+            pts = [(p[3], p[4]) for p in prepared]
+            pts2 = spread_collisions(pts, min_deg=0.06)
+            prepared = [
+                (prepared[i][0], prepared[i][1], prepared[i][2], pts2[i][0], pts2[i][1],
+                 prepared[i][5], prepared[i][6])
+                for i in range(len(prepared))
+            ]
 
         for key, alert, district_code, lat, lon, slot, total in prepared:
             seen.add(key)
@@ -211,7 +240,6 @@ class ShmuAprsService:
             obj.lat = lat
             obj.lon = lon
             obj.slot = slot
-            # vždy pri zmene polohy, novom objekte, alebo bežnom beacone
             if (
                 pos_changed
                 or self._beacon_needed()
@@ -229,12 +257,11 @@ class ShmuAprsService:
             if key in seen and obj.alert.is_active(now, lead_hours=lead):
                 continue
             if not obj.kill_sent:
-                district_code = key.split("|", 1)[-1] if "|" in key else "SK"
-                lat, lon = obj.lat, obj.lon
+                district_code = key.split("|")[-1][:3].upper() if "|" in key else "SK"
                 log.info("Zrušujem objekt %s", obj.object_name)
                 if self.tx:
                     self.tx.send_object(
-                        obj.alert, lat=lat, lon=lon, alive=False,
+                        obj.alert, lat=obj.lat, lon=obj.lon, alive=False,
                         object_name=obj.object_name, district_label=district_code,
                     )
                 obj.kill_sent = True
@@ -264,9 +291,11 @@ class ShmuAprsService:
             log.error("Nepodarilo sa pripojiť k APRS-IS: %s", e)
         self._running = True
         self._notify("READY=1")
+
         def _handle_signal(signum, frame):
             log.info("Prijatý signál %s – ukončujem", signum)
             self._running = False
+
         signal.signal(signal.SIGTERM, _handle_signal)
         signal.signal(signal.SIGINT, _handle_signal)
         log.info("Služba beží. Filter: regions=%s districts=%s min_level=%s lead_hours=%s",
@@ -292,10 +321,9 @@ class ShmuAprsService:
         for key, obj in list(self.active.items()):
             if obj.kill_sent or not self.tx:
                 continue
-            district_code = key.split("|", 1)[-1] if "|" in key else "SK"
             self.tx.send_object(
                 obj.alert, lat=obj.lat, lon=obj.lon, alive=False,
-                object_name=obj.object_name, district_label=district_code,
+                object_name=obj.object_name, district_label="SK",
             )
         if self.tx:
             self.tx.disconnect()

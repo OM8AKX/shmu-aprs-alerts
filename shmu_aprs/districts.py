@@ -111,6 +111,7 @@ DISTRICT_CENTERS: Dict[str, Tuple[float, float]] = {
     "trebisov": (48.6290, 21.7190),
 }
 
+# unikátne 2–3 znakové skratky (žiadne duplicity)
 DISTRICT_SHORT: Dict[str, str] = {
     "bratislava": "BA", "malacky": "MA", "pezinok": "PK", "senec": "SC",
     "trnava": "TT", "dunajská streda": "DS", "galanta": "GA", "hlohovec": "HC",
@@ -132,9 +133,10 @@ DISTRICT_SHORT: Dict[str, str] = {
     "žiar nad hronom": "ZH", "ziar nad hronom": "ZH", "žarnovica": "ZC",
     "prešov": "PO", "presov": "PO", "bardejov": "BJ", "humenné": "HE", "humenne": "HE",
     "kežmarok": "KK", "kezmarok": "KK", "levoča": "LE", "levoca": "LE",
-    "medzilaborce": "ML", "poprad": "PP", "sabinov": "SB", "snina": "SV",
+    "medzilaborce": "ML", "poprad": "PP", "sabinov": "SB",
+    "snina": "SN",  # pozor: SN predtým Sp. Nová Ves → teraz SNx
     "stará ľubovňa": "SL", "stara lubovna": "SL", "stropkov": "SP", "stroplkov": "SP",
-    "svidník": "SV", "svidnik": "SV",
+    "svidník": "SW", "svidnik": "SW",
     "vranov nad topľou": "VT", "vranov nad toplou": "VT",
     "košice": "KE", "kosice": "KE",
     "košice mesto": "KE", "kosice mesto": "KE",
@@ -142,7 +144,7 @@ DISTRICT_SHORT: Dict[str, str] = {
     "gelnica": "GL", "michalovce": "MI",
     "rožňava": "RV", "roznava": "RV",
     "sobrance": "SO",
-    "spišská nová ves": "SN", "spisska nova ves": "SN",
+    "spišská nová ves": "SX", "spisska nova ves": "SX",
     "trebišov": "TV", "trebisov": "TV",
 }
 
@@ -159,8 +161,8 @@ REGION_CENTERS: Dict[str, Tuple[float, float]] = {
 
 DEFAULT_CENTER = (48.67, 19.70)
 
-# ~8 km od stredu – na mape aprs.fi jasne oddelené ikony
-_OFFSET_RADIUS_DEG = 0.072
+# ~12 km – výrazný posun na mape aprs.fi
+_OFFSET_STEP_DEG = 0.11
 
 
 def _norm(name: str) -> str:
@@ -168,18 +170,23 @@ def _norm(name: str) -> str:
 
 
 def lookup_district(name: str) -> Optional[Tuple[str, float, float]]:
+    """Vráti (normalizovaný_kľúč, lat, lon). Preferuje presnú zhodu."""
     n = _norm(name)
     if n in DISTRICT_CENTERS:
         lat, lon = DISTRICT_CENTERS[n]
         return n, lat, lon
-    for key, (lat, lon) in DISTRICT_CENTERS.items():
-        if key in n or n in key:
+    # dlhšie kľúče skôr (košice mesto pred košice)
+    for key in sorted(DISTRICT_CENTERS.keys(), key=len, reverse=True):
+        lat, lon = DISTRICT_CENTERS[key]
+        if key == n or n.startswith(key + " ") or key.startswith(n + " "):
+            return key, lat, lon
+        if len(n) >= 5 and (key in n or n in key):
             return key, lat, lon
     return None
 
 
 def short_code(district_key: str) -> str:
-    return DISTRICT_SHORT.get(district_key, district_key[:4].upper())
+    return DISTRICT_SHORT.get(district_key, district_key[:3].upper())
 
 
 def offset_position(
@@ -188,45 +195,64 @@ def offset_position(
     index: int,
     total: int = 1,
 ) -> Tuple[float, float]:
-    """Rozloží ikony okolo stredu okresu (~8 km), aby sa na mape neprekrývali.
-
-    Pri total==1 ostane stred. Pri total>1 sú VŠETKY body na kružnici
-    (vrátane prvej), rovnomerne podľa indexu.
-    """
+    """Rozloží ikony do mriežky (~12 km krok), aby sa neprekrývali."""
     if total <= 1 or index < 0:
         return lat, lon
-    # rovnomerné uhly: 0, 2π/n, 4π/n, …
-    angle = (2.0 * math.pi * index) / total
-    # mierny fázový posun, aby prvá nebola vždy presne na severe
-    angle += math.pi / 12.0
-    radius = _OFFSET_RADIUS_DEG
-    # druhý prstenec pri viac ako 6 ikonách
-    if index >= 6:
-        radius = _OFFSET_RADIUS_DEG * 1.7
-        angle = (2.0 * math.pi * (index - 6)) / max(total - 6, 1)
-    dlat = radius * math.cos(angle)
+    # mriežka 3 stĺpce: N/S rady, E/W stĺpce
+    col = index % 3
+    row = index // 3
+    # vycentruj mriežku okolo stredu
+    cols = min(total, 3)
+    rows = (total + 2) // 3
+    dlat = (row - (rows - 1) / 2.0) * _OFFSET_STEP_DEG
+    dlon = (col - (cols - 1) / 2.0) * _OFFSET_STEP_DEG
     cos_lat = max(math.cos(math.radians(lat)), 0.3)
-    dlon = radius * math.sin(angle) / cos_lat
+    dlon = dlon / cos_lat
     return lat + dlat, lon + dlon
+
+
+def spread_collisions(
+    points: List[Tuple[float, float]],
+    min_deg: float = 0.05,
+) -> List[Tuple[float, float]]:
+    """Ak dve ikony skončia bližšie než min_deg (~5.5 km), odsunie ich."""
+    if len(points) <= 1:
+        return points
+    out = [list(p) for p in points]
+    for i in range(len(out)):
+        for j in range(i):
+            dlat = out[i][0] - out[j][0]
+            dlon = out[i][1] - out[j][1]
+            dist = math.hypot(dlat, dlon * max(math.cos(math.radians(out[i][0])), 0.3))
+            if dist < min_deg:
+                # posuň i severovýchodne o (min_deg - dist) + rezerva
+                push = min_deg - dist + 0.02
+                angle = (i * 2.4 + j) % (2 * math.pi)
+                out[i][0] += push * math.cos(angle)
+                out[i][1] += push * math.sin(angle) / max(
+                    math.cos(math.radians(out[i][0])), 0.3
+                )
+    return [(p[0], p[1]) for p in out]
 
 
 def resolve_alert_positions(
     areas: List[str],
     regions: List[str],
-) -> List[Tuple[str, float, float]]:
-    found: Dict[str, Tuple[str, float, float]] = {}
+) -> List[Tuple[str, str, float, float]]:
+    """Vráti zoznam (district_key, short_code, lat, lon)."""
+    found: Dict[str, Tuple[str, str, float, float]] = {}
     for area in areas or []:
         hit = lookup_district(area)
         if hit:
             key, lat, lon = hit
-            found[key] = (short_code(key), lat, lon)
+            found[key] = (key, short_code(key), lat, lon)
     if not found:
         for reg in regions or []:
             code = reg.upper().strip()
             if code in REGION_CENTERS:
                 lat, lon = REGION_CENTERS[code]
-                found[code] = (code[:4], lat, lon)
+                found[code] = (code, code[:3], lat, lon)
     if not found:
         lat, lon = DEFAULT_CENTER
-        return [("SK", lat, lon)]
+        return [("SK", "SK", lat, lon)]
     return list(found.values())
