@@ -1,15 +1,22 @@
-# SHMÚ → APRS Meteorologické výstrahy
+# SHMÚ → APRS Meteorologické výstrahy + povodňové stavy
 
 Kompletný Python projekt pre **Raspberry Pi**, ktorý:
 
 * sťahuje oficiálne meteorologické výstrahy zo **SHMÚ** (CAP 1.2 + HTML fallback)
-* filtruje podľa **krajov / okresov** (Košice, Prešov, …)
-* mapuje stupne na **farebné úrovne** (žltá / oranžová / červená)
-* vysiela ich ako **APRS objekty** do stredu každého okresu
-* začína vysielať **12 h pred** začiatkom platnosti
+* filtruje podľa **krajov / okresov** (Košice, Prešov, Žilina, Banská Bystrica, …)
+* mapuje stupne na **farebné úrovne** (žltá / oranžová / červená) a popis „Výstraha N.st.“
+* vysiela ich ako **APRS objekty** do stredu každého okresu (s posunom pri viacerých výstrahách)
 * opakuje vysielanie každých **30 minút**
 * po expirácii automaticky posiela **kill** objektu
 * beží ako **systemd** služba s **watchdogom**, alebo v **Dockeri**
+
+### Novinka: povodňové stavy (SPA)
+
+* sťahuje aktuálne **vodné stavy** z vodomerných staníc SHMÚ
+* počíta / deteguje **stupeň povodňovej aktivity (SPA 1.–3.)**
+* pri SPA ≥ nastaveného minima vysiela APRS objekty pri stanici
+* komentár napr.: `SPA 2.st. Hornád` + hladina v cm
+* preddefinované stanice: Hornád (KE, Kysak, Margecany), Poprad, Torysa, Laborec, Topľa, Slaná, Váh, Orava, Kysuca, Hron a ďalšie
 
 ## Požiadavky
 
@@ -78,29 +85,36 @@ aprs:
   passcode: 12345
 
 filter:
-  regions: ["KSK", "PSK"]
-  districts: ["Košice", "Prešov", "Poprad"]
+  regions: ["KSK", "PSK", "ZSK", "BBSK"]
+  districts: ["Košice mesto", "Prešov", "Poprad"]
   min_level: 1
+
+hydro:
+  enabled: true
+  min_spa: 1              # vysielať od 1. stupňa SPA
+  url: "https://www.shmu.sk/sk/?page=765"
+  stations: []            # prázdne = preddefinované stanice
+  lifetime_hours: 2
 
 beacon:
   interval_minutes: 30
-  lead_hours: 12          # vysielať už X h pred začiatkom platnosti
+  lead_hours: 0           # 0 = až od začiatku platnosti výstrahy
   poll_interval_seconds: 300
 ```
 
 ## Ako to funguje
 
-1. Poll CAP feed (HTML fallback) každých 5 minút.
-2. Filter podľa krajov/okresov a `lead_hours`.
-3. Jeden APRS objekt do **stredu každého** postiženého okresu.
-4. Symbol podľa úrovne/javu (NWS Advisory, Emergency, búrka…).
-5. Po expirácii kill (`_`).
+1. Poll CAP feed (HTML fallback) každých 5 minút + hydro tabuľka staníc.
+2. Filter meteo výstrah podľa krajov/okresov.
+3. Hydro: SPA ≥ `min_spa` → APRS objekt pri súradniciach stanice.
+4. Meteo: jeden APRS objekt do **stredu každého** postihnutého okresu (s posunom pri viacerých).
+5. Symbol podľa úrovne/javu; po expirácii kill (`_`).
 
-| Úroveň | Prefix | Symbol (príklad) |
+| Úroveň | Popis | Symbol (príklad) |
 |--------|--------|------------------|
-| žltá (1) | — | NWS Advisory |
-| oranžová (2) | `!!` | NWS Site |
-| červená (3) | `!!!` | Emergency |
+| žltá (1) | Výstraha 1.st. / SPA 1 | podľa javu |
+| oranžová (2) | Výstraha 2.st. / SPA 2 | podľa javu |
+| červená (3) | Výstraha 3.st. / SPA 3 | Emergency / flood |
 
 ## Mapa
 
