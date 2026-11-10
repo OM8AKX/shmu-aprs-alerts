@@ -18,6 +18,7 @@ from .aprs_tx import AprsTransmitter
 from .cap_parser import fetch_cap_alerts
 from .html_fallback import fetch_html_alerts
 from .districts import offset_position, resolve_alert_positions, spread_collisions
+from .hydro import fetch_hydro_readings, readings_to_alerts, resolve_hydro_position, STATIONS
 from .models import ActiveObject, Alert, AlertLevel
 
 log = logging.getLogger(__name__)
@@ -48,9 +49,8 @@ class ShmuAprsService:
         handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
         if log_file:
             try:
-                # radšej do adresára služby – žiadne permission problémy v /var/log
                 log_path = Path(log_file)
-                if str(log_path).startswith("/var/log/") and log_path.name == log_path.name:
+                if str(log_path).startswith("/var/log/"):
                     alt = Path("/opt/shmu-aprs-alerts/logs") / log_path.name
                     try:
                         alt.parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +120,9 @@ class ShmuAprsService:
         lead = self._lead_hours()
         result = []
         for a in alerts:
+            if a.identifier.startswith("HYDRO-"):
+                result.append(a)
+                continue
             if a.level < min_level:
                 continue
             if not a.is_active(lead_hours=lead):
@@ -147,6 +150,30 @@ class ShmuAprsService:
         log.info("Po filtri: %d výstrah (z %d)", len(result), len(alerts))
         return result
 
+    def _poll_hydro(self) -> List[Alert]:
+        hcfg = self.cfg.get("hydro") or {}
+        if not hcfg.get("enabled", False):
+            return []
+        try:
+            stations = hcfg.get("stations") or list(STATIONS.keys())
+            if isinstance(stations, list):
+                stations = [str(s) for s in stations]
+            readings = fetch_hydro_readings(
+                self.session,
+                url=hcfg.get("url", "https://www.shmu.sk/sk/?page=765"),
+                station_ids=stations,
+            )
+            min_spa = int(hcfg.get("min_spa", 1))
+            lifetime = float(hcfg.get("lifetime_hours", 2))
+            alerts = readings_to_alerts(readings, min_spa=min_spa, lifetime_hours=lifetime)
+            log.info("HYDRO: SPA>=%s → %d objektov na vysielanie", min_spa, len(alerts))
+            for a in alerts:
+                log.info("  HYDRO %s | %s | %s", a.event, a.headline, a.identifier)
+            return alerts
+        except Exception:
+            log.exception("HYDRO: chyba pri načítaní")
+            return []
+
     def _poll_alerts(self) -> List[Alert]:
         sources = self.cfg.get("sources", {})
         alerts: List[Alert] = []
@@ -166,7 +193,9 @@ class ShmuAprsService:
                     log.info("HTML fallback: načítaných %d výstrah (pred filtrom)", len(alerts))
                 except Exception as e:
                     log.exception("Chyba HTML fallback: %s", e)
-        return self._filter_alerts(alerts)
+        filtered = self._filter_alerts(alerts)
+        filtered.extend(self._poll_hydro())
+        return filtered
 
     def _beacon_needed(self) -> bool:
         interval = timedelta(minutes=self.cfg.get("beacon", {}).get("interval_minutes", 30))
@@ -181,9 +210,18 @@ class ShmuAprsService:
         seen: Set[str] = set()
         lead = self._lead_hours()
 
-        # group_key = skutočný okres (nie skratka) → správny posun v rámci okresu
         by_group: Dict[str, List[tuple]] = {}
         for alert in alerts:
+            if alert.identifier.startswith("HYDRO-"):
+                hp = resolve_hydro_position(alert)
+                if not hp:
+                    continue
+                code, lat, lon = hp
+                key = f"{alert.identifier}|{code}"
+                by_group.setdefault(f"HYDRO-{alert.identifier}", []).append(
+                    (key, alert, code, lat, lon)
+                )
+                continue
             positions = resolve_alert_positions(alert.areas, alert.regions)
             for district_key, district_code, lat, lon in positions:
                 key = f"{alert.identifier}|{district_key}"
@@ -199,7 +237,6 @@ class ShmuAprsService:
                 lat2, lon2 = offset_position(lat, lon, slot, total=total)
                 prepared.append((key, alert, code, lat2, lon2, slot, total))
 
-        # globálne rozohnanie kolízií (rôzne okresy s rovnakými/súradnicami blízko seba)
         if len(prepared) > 1:
             pts = [(p[3], p[4]) for p in prepared]
             pts2 = spread_collisions(pts, min_deg=0.06)
@@ -298,11 +335,12 @@ class ShmuAprsService:
 
         signal.signal(signal.SIGTERM, _handle_signal)
         signal.signal(signal.SIGINT, _handle_signal)
-        log.info("Služba beží. Filter: regions=%s districts=%s min_level=%s lead_hours=%s",
+        log.info("Služba beží. Filter: regions=%s districts=%s min_level=%s lead_hours=%s hydro=%s",
                  self.cfg.get("filter", {}).get("regions"),
                  self.cfg.get("filter", {}).get("districts"),
                  self.cfg.get("filter", {}).get("min_level"),
-                 self._lead_hours())
+                 self._lead_hours(),
+                 self.cfg.get("hydro", {}).get("enabled", False))
         while self._running:
             try:
                 if self._poll_needed():
