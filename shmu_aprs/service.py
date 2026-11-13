@@ -24,6 +24,7 @@ from .districts import (
     lookup_district,
 )
 from .hydro import fetch_hydro_readings, readings_to_alerts, resolve_hydro_position, STATIONS
+from .lightning import fetch_lightning_alerts, get_collector
 from .models import ActiveObject, Alert, AlertLevel
 
 log = logging.getLogger(__name__)
@@ -43,6 +44,8 @@ class ShmuAprsService:
         self.watchdog_enabled = self.cfg.get("watchdog", {}).get("enabled", False)
         self.watchdog_interval = self.cfg.get("watchdog", {}).get("interval_seconds", 60)
         self._notify_socket = os.environ.get("NOTIFY_SOCKET")
+        # LGT identifier → (lat, lon)
+        self._lightning_pos: Dict[str, Tuple[float, float]] = {}
 
     def _load_config(self) -> dict:
         with open(self.config_path, "r", encoding="utf-8") as f:
@@ -119,7 +122,6 @@ class ShmuAprsService:
 
     @staticmethod
     def _district_areas(alert: Alert) -> List[str]:
-        """Len názvy, ktoré sa dajú namapovať na okres."""
         out = []
         for area in alert.areas or []:
             if lookup_district(area):
@@ -127,14 +129,13 @@ class ShmuAprsService:
         return out
 
     def _filter_alerts(self, alerts: List[Alert]) -> List[Alert]:
-        """Iba okresné výstrahy – kraje a celoslovenské sa zahodia."""
         flt = self.cfg.get("filter", {})
         districts = [d.lower() for d in flt.get("districts", [])]
         min_level = AlertLevel(flt.get("min_level", 1))
         lead = self._lead_hours()
         result = []
         for a in alerts:
-            if a.identifier.startswith("HYDRO-"):
+            if a.identifier.startswith(("HYDRO-", "LGT-")):
                 result.append(a)
                 continue
             if a.level < min_level:
@@ -144,14 +145,10 @@ class ShmuAprsService:
             if self._is_national(a):
                 log.info("Filter: preskakujem celoslovenskú %s", a.event)
                 continue
-
-            # musí mať aspoň jeden rozpoznateľný okres
             dist_areas = self._district_areas(a)
             if not dist_areas:
-                log.debug("Filter: bez okresu (kraj/neznáme) – %s areas=%s",
-                          a.event, a.areas)
+                log.debug("Filter: bez okresu – %s areas=%s", a.event, a.areas)
                 continue
-
             if districts:
                 match = False
                 for area in dist_areas:
@@ -161,12 +158,9 @@ class ShmuAprsService:
                         break
                 if not match:
                     continue
-
-            # areas zúžiť na okresy (aby sa neposielal kraj)
             a.areas = dist_areas
-            a.regions = []  # kraje sa nepoužívajú na mapu
+            a.regions = []
             result.append(a)
-
         log.info("Po filtri (iba okresy): %d výstrah (z %d)", len(result), len(alerts))
         return result
 
@@ -185,12 +179,25 @@ class ShmuAprsService:
             )
             min_spa = int(hcfg.get("min_spa", 1))
             alerts = readings_to_alerts(readings, min_spa=min_spa)
-            log.info("HYDRO: SPA>=%s → %d objektov na vysielanie", min_spa, len(alerts))
-            for a in alerts:
-                log.info("  HYDRO %s | %s | %s", a.event, a.headline, a.identifier)
+            log.info("HYDRO: SPA>=%s → %d objektov", min_spa, len(alerts))
             return alerts
         except Exception:
             log.exception("HYDRO: chyba pri načítaní")
+            return []
+
+    def _poll_lightning(self) -> List[Alert]:
+        lcfg = self.cfg.get("lightning") or {}
+        if not lcfg.get("enabled", False):
+            return []
+        try:
+            pairs = fetch_lightning_alerts(lcfg)
+            self._lightning_pos = {a.identifier: (lat, lon) for a, lat, lon in pairs}
+            alerts = [a for a, _, _ in pairs]
+            for a, lat, lon in pairs:
+                log.info("  LGT %s @ [%.3f, %.3f]", a.headline, lat, lon)
+            return alerts
+        except Exception:
+            log.exception("LIGHTNING: chyba")
             return []
 
     def _poll_alerts(self) -> List[Alert]:
@@ -214,6 +221,7 @@ class ShmuAprsService:
                     log.exception("Chyba HTML fallback: %s", e)
         filtered = self._filter_alerts(alerts)
         filtered.extend(self._poll_hydro())
+        filtered.extend(self._poll_lightning())
         return filtered
 
     def _beacon_needed(self) -> bool:
@@ -241,7 +249,17 @@ class ShmuAprsService:
                     (key, alert, code, lat, lon)
                 )
                 continue
-            # len okresy – prázdny zoznam = kraj/neznáme → neposielať
+            if alert.identifier.startswith("LGT-"):
+                pos = self._lightning_pos.get(alert.identifier)
+                if not pos:
+                    continue
+                lat, lon = pos
+                code = "LG"
+                key = f"{alert.identifier}|LG"
+                by_group.setdefault(f"LGT-{alert.identifier}", []).append(
+                    (key, alert, code, lat, lon)
+                )
+                continue
             positions = resolve_alert_positions(alert.areas, alert.regions)
             if not positions:
                 log.debug("Bez okresnej pozície: %s areas=%s", alert.event, alert.areas)
@@ -300,10 +318,12 @@ class ShmuAprsService:
             obj.lat = lat
             obj.lon = lon
             obj.slot = slot
+            # blesky častejšie – max 10 min medzi packetmi
+            refresh = timedelta(minutes=10 if alert.identifier.startswith("LGT-") else 25)
             if (
                 pos_changed
                 or self._beacon_needed()
-                or (now - obj.last_sent) > timedelta(minutes=25)
+                or (now - obj.last_sent) > refresh
             ):
                 if self.tx and self.tx.send_object(
                     alert, lat=lat, lon=lon, alive=True,
@@ -349,6 +369,15 @@ class ShmuAprsService:
             self.tx.connect()
         except Exception as e:
             log.error("Nepodarilo sa pripojiť k APRS-IS: %s", e)
+
+        # blesky – spusti collector na pozadí
+        lcfg = self.cfg.get("lightning") or {}
+        if lcfg.get("enabled", False):
+            try:
+                get_collector(lcfg)
+            except Exception:
+                log.exception("LIGHTNING: collector sa nespustil")
+
         self._running = True
         self._notify("READY=1")
 
@@ -359,10 +388,9 @@ class ShmuAprsService:
         signal.signal(signal.SIGTERM, _handle_signal)
         signal.signal(signal.SIGINT, _handle_signal)
         log.info(
-            "Služba beží. Iba okresy. districts=%s min_level=%s hydro=%s",
-            self.cfg.get("filter", {}).get("districts"),
-            self.cfg.get("filter", {}).get("min_level"),
+            "Služba beží. okresy + hydro=%s lightning=%s",
             self.cfg.get("hydro", {}).get("enabled", False),
+            lcfg.get("enabled", False),
         )
         while self._running:
             try:

@@ -35,6 +35,7 @@ class AlertLevel(IntEnum):
 
 _EVENT_SYMBOLS: dict[str, Tuple[str, str]] = {
     "búrka": ("\\", "T"), "búrk": ("\\", "T"), "thunderstorm": ("\\", "T"),
+    "blesky": ("\\", "T"), "blesk": ("\\", "T"), "lightning": ("\\", "T"),
     "vietor": ("\\", "<"), "wind": ("\\", "<"), "víchr": ("\\", "<"),
     "dážď": ("\\", "`"), "rain": ("\\", "`"), "lejak": ("\\", "`"),
     "hmla": ("\\", "H"), "fog": ("\\", "H"),
@@ -71,7 +72,6 @@ class Alert:
     source: str = "SHMU"
 
     def is_active(self, now: Optional[datetime] = None, lead_hours: float = 0.0) -> bool:
-        """Aktívna až od effective (lead_hours=0) do expires."""
         now = now or datetime.now(timezone.utc)
         if self.expires and now > self.expires:
             return False
@@ -95,7 +95,9 @@ class Alert:
         return "\\", "<"
 
     def short_comment(self, max_len: int = 67, district: str = "") -> str:
-        """Celý rozsah platnosti: Výstraha 1.st. KE Vietor 02.11 08:00-04.11 18:00"""
+        if self.identifier.startswith("LGT-") or (self.event or "").lower().startswith("blesk"):
+            base = self.headline or self.description or "Blesky"
+            return base[:max_len]
         degree = self.level.degree_short
         place = district or (",".join(self.areas[:2]) if self.areas else "SK")
         validity = ""
@@ -154,12 +156,9 @@ class Alert:
         return " | ".join(parts)
 
     def object_name(self, district_code: str = "") -> str:
-        """Unikátne 9-znakové APRS meno: SH + okres + hash(identifier)."""
         code = (district_code or "SK")[:3].upper()
-        # hash celého ID + event → stabilné a unikátne aj pri rovnakom okrese
         raw = f"{self.identifier}|{self.event}"
         h = hashlib.md5(raw.encode("utf-8")).hexdigest().upper()
-        # SH(2) + code(≤3) + hash → max 9
         rest = 9 - 2 - len(code)
         name = f"SH{code}{h[:rest]}"
         return name[:9].ljust(9)

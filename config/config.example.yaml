@@ -1,5 +1,5 @@
 # ============================================================
-# SHMÚ → APRS Meteorologické výstrahy + hydro SPA
+# SHMÚ → APRS Meteorologické výstrahy + hydro SPA + blesky
 # Skopíruj na config.yaml a uprav podľa seba
 # ============================================================
 
@@ -17,7 +17,6 @@ filter:
     - "ZSK"
     - "BBSK"
   districts:
-    # Košický kraj (KSK)
     - "Košice mesto"
     - "Košice okolie"
     - "Gelnica"
@@ -26,7 +25,6 @@ filter:
     - "Sobrance"
     - "Spišská Nová Ves"
     - "Trebišov"
-    # Prešovský kraj (PSK)
     - "Prešov"
     - "Bardejov"
     - "Humenné"
@@ -40,7 +38,6 @@ filter:
     - "Stropkov"
     - "Svidník"
     - "Vranov nad Topľou"
-    # Žilinský kraj (ZSK)
     - "Žilina"
     - "Bytča"
     - "Čadca"
@@ -52,7 +49,6 @@ filter:
     - "Ružomberok"
     - "Turčianske Teplice"
     - "Tvrdošín"
-    # Banskobystrický kraj (BBSK)
     - "Banská Bystrica"
     - "Banská Štiavnica"
     - "Brezno"
@@ -68,18 +64,30 @@ filter:
     - "Žiar nad Hronom"
   min_level: 1
 
-# Povodňová aktivita (vodomerné stanice SHMÚ)
-# Objekt na mape trvá kým SPA >= min_spa; po poklese sa pošle kill
 hydro:
   enabled: true
-  min_spa: 1                 # vysielať od 1. stupňa SPA (1–3)
+  min_spa: 1
   url: "https://www.shmu.sk/sk/?page=765"
-  # prázdne = všetky preddefinované stanice v hydro.py
   stations: []
+
+# Aktivita bleskov (Blitzortung) – SK + ~30 km za hranicami
+# Agregácia do mriežky (nie každý úder) kvôli limitu APRS-IS
+# Dáta len pre súkromné/hobby použitie podľa podmienok Blitzortung.org
+lightning:
+  enabled: true
+  window_minutes: 15       # údery za posledných N minút
+  grid_deg: 0.20           # ~22 km bunky
+  min_strikes: 2           # minimálny počet v bunke
+  max_objects: 15          # max ikon na mape naraz
+  # bbox SK + 30 km (predvolené hodnoty v lightning.py)
+  # south: 47.48
+  # west: 16.50
+  # north: 49.92
+  # east: 22.90
 
 beacon:
   interval_minutes: 30
-  lead_hours: 0                  # 0 = vysielať až od začiatku platnosti (effective)
+  lead_hours: 0
   poll_interval_seconds: 300
   object_lifetime_hours: 6
 
