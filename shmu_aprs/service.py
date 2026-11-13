@@ -44,7 +44,6 @@ class ShmuAprsService:
         self.watchdog_enabled = self.cfg.get("watchdog", {}).get("enabled", False)
         self.watchdog_interval = self.cfg.get("watchdog", {}).get("interval_seconds", 60)
         self._notify_socket = os.environ.get("NOTIFY_SOCKET")
-        # LGT identifier → (lat, lon)
         self._lightning_pos: Dict[str, Tuple[float, float]] = {}
 
     def _load_config(self) -> dict:
@@ -194,7 +193,7 @@ class ShmuAprsService:
             self._lightning_pos = {a.identifier: (lat, lon) for a, lat, lon in pairs}
             alerts = [a for a, _, _ in pairs]
             for a, lat, lon in pairs:
-                log.info("  LGT %s @ [%.3f, %.3f]", a.headline, lat, lon)
+                log.info("  LGT %s @ [%.4f, %.4f]", a.headline, lat, lon)
             return alerts
         except Exception:
             log.exception("LIGHTNING: chyba")
@@ -275,17 +274,21 @@ class ShmuAprsService:
             items.sort(key=lambda x: x[0])
             total = len(items)
             for slot, (key, alert, code, lat, lon) in enumerate(items):
-                lat2, lon2 = offset_position(lat, lon, slot, total=total)
+                # LGT/HYDRO: presné GPS – žiadny offset
+                if alert.identifier.startswith(("LGT-", "HYDRO-")):
+                    lat2, lon2 = lat, lon
+                else:
+                    lat2, lon2 = offset_position(lat, lon, slot, total=total)
                 prepared.append((key, alert, code, lat2, lon2, slot, total))
 
-        if len(prepared) > 1:
-            pts = [(p[3], p[4]) for p in prepared]
+        # rozohnanie kolízií len pre meteo (okresné) ikony
+        meteo_idx = [i for i, p in enumerate(prepared) if not p[1].identifier.startswith(("LGT-", "HYDRO-"))]
+        if len(meteo_idx) > 1:
+            pts = [(prepared[i][3], prepared[i][4]) for i in meteo_idx]
             pts2 = spread_collisions(pts)
-            prepared = [
-                (prepared[i][0], prepared[i][1], prepared[i][2], pts2[i][0], pts2[i][1],
-                 prepared[i][5], prepared[i][6])
-                for i in range(len(prepared))
-            ]
+            for k, i in enumerate(meteo_idx):
+                p = prepared[i]
+                prepared[i] = (p[0], p[1], p[2], pts2[k][0], pts2[k][1], p[5], p[6])
 
         for key, alert, district_code, lat, lon, slot, total in prepared:
             seen.add(key)
@@ -318,7 +321,6 @@ class ShmuAprsService:
             obj.lat = lat
             obj.lon = lon
             obj.slot = slot
-            # blesky častejšie – max 10 min medzi packetmi
             refresh = timedelta(minutes=10 if alert.identifier.startswith("LGT-") else 25)
             if (
                 pos_changed
@@ -370,7 +372,6 @@ class ShmuAprsService:
         except Exception as e:
             log.error("Nepodarilo sa pripojiť k APRS-IS: %s", e)
 
-        # blesky – spusti collector na pozadí
         lcfg = self.cfg.get("lightning") or {}
         if lcfg.get("enabled", False):
             try:
