@@ -17,7 +17,12 @@ import yaml
 from .aprs_tx import AprsTransmitter
 from .cap_parser import fetch_cap_alerts
 from .html_fallback import fetch_html_alerts
-from .districts import offset_position, resolve_alert_positions, spread_collisions
+from .districts import (
+    offset_position,
+    resolve_alert_positions,
+    spread_collisions,
+    lookup_district,
+)
 from .hydro import fetch_hydro_readings, readings_to_alerts, resolve_hydro_position, STATIONS
 from .models import ActiveObject, Alert, AlertLevel
 
@@ -112,9 +117,18 @@ class ShmuAprsService:
                 return True
         return False
 
+    @staticmethod
+    def _district_areas(alert: Alert) -> List[str]:
+        """Len názvy, ktoré sa dajú namapovať na okres."""
+        out = []
+        for area in alert.areas or []:
+            if lookup_district(area):
+                out.append(area)
+        return out
+
     def _filter_alerts(self, alerts: List[Alert]) -> List[Alert]:
+        """Iba okresné výstrahy – kraje a celoslovenské sa zahodia."""
         flt = self.cfg.get("filter", {})
-        regions = set(r.upper() for r in flt.get("regions", []))
         districts = [d.lower() for d in flt.get("districts", [])]
         min_level = AlertLevel(flt.get("min_level", 1))
         lead = self._lead_hours()
@@ -127,27 +141,33 @@ class ShmuAprsService:
                 continue
             if not a.is_active(lead_hours=lead):
                 continue
-            if not regions and not districts:
-                result.append(a)
-                continue
             if self._is_national(a):
-                log.info("Filter: preskakujem celoslovenskú %s (iba okresy)", a.event)
+                log.info("Filter: preskakujem celoslovenskú %s", a.event)
                 continue
-            match_district = False
+
+            # musí mať aspoň jeden rozpoznateľný okres
+            dist_areas = self._district_areas(a)
+            if not dist_areas:
+                log.debug("Filter: bez okresu (kraj/neznáme) – %s areas=%s",
+                          a.event, a.areas)
+                continue
+
             if districts:
-                for area in a.areas:
+                match = False
+                for area in dist_areas:
                     low = area.lower()
                     if any(d in low for d in districts):
-                        match_district = True
+                        match = True
                         break
-            if districts:
-                if match_district:
-                    result.append(a)
-                continue
-            match_region = bool(regions & set(r.upper() for r in a.regions))
-            if match_region:
-                result.append(a)
-        log.info("Po filtri: %d výstrah (z %d)", len(result), len(alerts))
+                if not match:
+                    continue
+
+            # areas zúžiť na okresy (aby sa neposielal kraj)
+            a.areas = dist_areas
+            a.regions = []  # kraje sa nepoužívajú na mapu
+            result.append(a)
+
+        log.info("Po filtri (iba okresy): %d výstrah (z %d)", len(result), len(alerts))
         return result
 
     def _poll_hydro(self) -> List[Alert]:
@@ -164,8 +184,7 @@ class ShmuAprsService:
                 station_ids=stations,
             )
             min_spa = int(hcfg.get("min_spa", 1))
-            lifetime = float(hcfg.get("lifetime_hours", 2))
-            alerts = readings_to_alerts(readings, min_spa=min_spa, lifetime_hours=lifetime)
+            alerts = readings_to_alerts(readings, min_spa=min_spa)
             log.info("HYDRO: SPA>=%s → %d objektov na vysielanie", min_spa, len(alerts))
             for a in alerts:
                 log.info("  HYDRO %s | %s | %s", a.event, a.headline, a.identifier)
@@ -222,7 +241,11 @@ class ShmuAprsService:
                     (key, alert, code, lat, lon)
                 )
                 continue
+            # len okresy – prázdny zoznam = kraj/neznáme → neposielať
             positions = resolve_alert_positions(alert.areas, alert.regions)
+            if not positions:
+                log.debug("Bez okresnej pozície: %s areas=%s", alert.event, alert.areas)
+                continue
             for district_key, district_code, lat, lon in positions:
                 key = f"{alert.identifier}|{district_key}"
                 by_group.setdefault(district_key, []).append(
@@ -239,7 +262,7 @@ class ShmuAprsService:
 
         if len(prepared) > 1:
             pts = [(p[3], p[4]) for p in prepared]
-            pts2 = spread_collisions(pts, min_deg=0.06)
+            pts2 = spread_collisions(pts)
             prepared = [
                 (prepared[i][0], prepared[i][1], prepared[i][2], pts2[i][0], pts2[i][1],
                  prepared[i][5], prepared[i][6])
@@ -335,12 +358,12 @@ class ShmuAprsService:
 
         signal.signal(signal.SIGTERM, _handle_signal)
         signal.signal(signal.SIGINT, _handle_signal)
-        log.info("Služba beží. Filter: regions=%s districts=%s min_level=%s lead_hours=%s hydro=%s",
-                 self.cfg.get("filter", {}).get("regions"),
-                 self.cfg.get("filter", {}).get("districts"),
-                 self.cfg.get("filter", {}).get("min_level"),
-                 self._lead_hours(),
-                 self.cfg.get("hydro", {}).get("enabled", False))
+        log.info(
+            "Služba beží. Iba okresy. districts=%s min_level=%s hydro=%s",
+            self.cfg.get("filter", {}).get("districts"),
+            self.cfg.get("filter", {}).get("min_level"),
+            self.cfg.get("hydro", {}).get("enabled", False),
+        )
         while self._running:
             try:
                 if self._poll_needed():

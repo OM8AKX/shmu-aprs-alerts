@@ -111,7 +111,6 @@ DISTRICT_CENTERS: Dict[str, Tuple[float, float]] = {
     "trebisov": (48.6290, 21.7190),
 }
 
-# unikátne 2–3 znakové skratky (žiadne duplicity)
 DISTRICT_SHORT: Dict[str, str] = {
     "bratislava": "BA", "malacky": "MA", "pezinok": "PK", "senec": "SC",
     "trnava": "TT", "dunajská streda": "DS", "galanta": "GA", "hlohovec": "HC",
@@ -148,24 +147,10 @@ DISTRICT_SHORT: Dict[str, str] = {
     "trebišov": "TV", "trebisov": "TV",
 }
 
-REGION_CENTERS: Dict[str, Tuple[float, float]] = {
-    "BSK": (48.15, 17.11),
-    "TTSK": (48.38, 17.59),
-    "TSK": (48.89, 18.04),
-    "NSK": (48.31, 18.08),
-    "ZSK": (49.22, 18.74),
-    "BBSK": (48.74, 19.15),
-    "PSK": (49.00, 21.24),
-    "KSK": (48.72, 21.26),
-}
-
 DEFAULT_CENTER = (48.67, 19.70)
 
-# Vzdialenosť medzi ikonami pri viacerých výstrahách v jednom okrese
-# ~0.05° ≈ 5.5 km – na aprs.fi sa neprekrývajú, stále v rámci okresu
 _OFFSET_RADIUS_DEG = 0.05
 _OFFSET_RING_DEG = 0.035
-# Minimálna vzdialenosť pri globálnom rozohnaní kolízií
 _MIN_SEPARATION_DEG = 0.04
 
 
@@ -174,8 +159,15 @@ def _norm(name: str) -> str:
 
 
 def lookup_district(name: str) -> Optional[Tuple[str, float, float]]:
-    """Vráti (normalizovaný_kľúč, lat, lon). Preferuje presnú zhodu."""
+    """Vráti (normalizovaný_kľúč, lat, lon) len pre okres. Kraje nevracia."""
     n = _norm(name)
+    # explicitne odmietni názvy krajov
+    if "kraj" in n or n in {
+        "bratislavský", "trnavský", "trenčiansky", "nitriansky",
+        "žilinský", "banskobystrický", "prešovský", "košický",
+        "bsk", "ttsk", "tsk", "nsk", "zsk", "bbsk", "psk", "ksk",
+    }:
+        return None
     if n in DISTRICT_CENTERS:
         lat, lon = DISTRICT_CENTERS[n]
         return n, lat, lon
@@ -198,24 +190,15 @@ def offset_position(
     index: int,
     total: int = 1,
 ) -> Tuple[float, float]:
-    """Rozloží ikony okolo stredu okresu, aby sa na mape neprekrývali.
-
-    Pri total==1 ostane stred.
-    Pri total>1 sú VŠETKY body na kružnici (~5.5 km), rovnomerne podľa indexu.
-    """
+    """Rozloží ikony okolo stredu okresu, aby sa na mape neprekrývali."""
     if total <= 1 or index < 0:
         return lat, lon
-
-    # rovnomerné uhly na kružnici – žiadne dve ikony v tom istom bode
     angle = (2.0 * math.pi * index) / total
-    angle += math.pi / 12.0  # mierny fázový posun
-
+    angle += math.pi / 12.0
     radius = _OFFSET_RADIUS_DEG
     if index >= 6:
-        # druhý prstenec pri 7+ výstrahách
         radius = _OFFSET_RADIUS_DEG + _OFFSET_RING_DEG
         angle = (2.0 * math.pi * (index - 6)) / max(total - 6, 1)
-
     dlat = radius * math.cos(angle)
     cos_lat = max(math.cos(math.radians(lat)), 0.3)
     dlon = radius * math.sin(angle) / cos_lat
@@ -226,7 +209,6 @@ def spread_collisions(
     points: List[Tuple[float, float]],
     min_deg: float = _MIN_SEPARATION_DEG,
 ) -> List[Tuple[float, float]]:
-    """Ak dve ikony skončia bližšie než min_deg (~4.5 km), odsunie ich."""
     if len(points) <= 1:
         return points
     out = [list(p) for p in points]
@@ -249,20 +231,12 @@ def resolve_alert_positions(
     areas: List[str],
     regions: List[str],
 ) -> List[Tuple[str, str, float, float]]:
-    """Vráti zoznam (district_key, short_code, lat, lon)."""
+    """Len okresy – žiadne stredy krajov ani fallback na SK."""
     found: Dict[str, Tuple[str, str, float, float]] = {}
     for area in areas or []:
         hit = lookup_district(area)
         if hit:
             key, lat, lon = hit
             found[key] = (key, short_code(key), lat, lon)
-    if not found:
-        for reg in regions or []:
-            code = reg.upper().strip()
-            if code in REGION_CENTERS:
-                lat, lon = REGION_CENTERS[code]
-                found[code] = (code, code[:3], lat, lon)
-    if not found:
-        lat, lon = DEFAULT_CENTER
-        return [("SK", "SK", lat, lon)]
+    # regions / kraje sa ZÁMERNE nepoužívajú na umiestnenie ikony
     return list(found.values())
