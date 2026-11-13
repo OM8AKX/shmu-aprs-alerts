@@ -1,8 +1,8 @@
 """Aktivita bleskov – agregácia pre APRS (SK + 30 km).
 
 Zdroj: Blitzortung.org live websocket (nekomerčné / hobby použitie).
-Každý úder sa NEPOŠLE – len stredy mriežky s počtom úderov,
-aby sa nezahltil APRS-IS.
+Údery sa zoskupia (aby sa nezahltil APRS-IS), ikona však ide na
+skutočnú polohu – centroid úderov v klastri, resp. posledný úder.
 
 Test bez reálnej búrky:
   lightning:
@@ -27,7 +27,6 @@ from .models import Alert, AlertLevel
 
 log = logging.getLogger(__name__)
 
-# Slovensko + ~30 km za hranicami (približný bbox)
 DEFAULT_SOUTH = 47.48
 DEFAULT_WEST = 16.50
 DEFAULT_NORTH = 49.92
@@ -39,7 +38,7 @@ WS_SERVERS = (
     "wss://ws8.blitzortung.org/",
 )
 
-# testovacie ohniská (lat, lon) – Košice, Prešov, Poprad, Bratislava okolie
+# testovacie ohniská (lat, lon)
 _SIM_FOCI = (
     (48.72, 21.26),
     (49.00, 21.24),
@@ -72,12 +71,8 @@ def _cell_key(lat: float, lon: float, grid: float) -> Tuple[int, int]:
     return int(math.floor(lat / grid)), int(math.floor(lon / grid))
 
 
-def _cell_center(i: int, j: int, grid: float) -> Tuple[float, float]:
-    return (i + 0.5) * grid, (j + 0.5) * grid
-
-
 class LightningCollector:
-    """Zbiera údery na pozadí a agreguje do mriežky."""
+    """Zbiera údery na pozadí a agreguje do klastrov."""
 
     def __init__(
         self,
@@ -88,6 +83,7 @@ class LightningCollector:
         grid_deg: float = 0.20,
         window_seconds: int = 900,
         simulate: bool = False,
+        position_mode: str = "last",  # "last" | "centroid"
     ):
         self.south = south
         self.west = west
@@ -96,6 +92,7 @@ class LightningCollector:
         self.grid_deg = grid_deg
         self.window_seconds = window_seconds
         self.simulate = simulate
+        self.position_mode = (position_mode or "last").lower()
         self._strikes: List[Strike] = []
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -111,8 +108,8 @@ class LightningCollector:
         self._thread.start()
         mode = "SIMULATE" if self.simulate else "live"
         log.info(
-            "LIGHTNING: collector štart [%s] (bbox %.2f–%.2f / %.2f–%.2f, grid=%.2f°)",
-            mode, self.south, self.north, self.west, self.east, self.grid_deg,
+            "LIGHTNING: collector štart [%s] pos=%s (bbox %.2f–%.2f / %.2f–%.2f, grid=%.2f°)",
+            mode, self.position_mode, self.south, self.north, self.west, self.east, self.grid_deg,
         )
 
     def stop(self) -> None:
@@ -122,13 +119,13 @@ class LightningCollector:
             self._thread = None
 
     def inject_simulate(self, n_per_focus: int = 8) -> None:
-        """Jednorazovo vloží fiktívne údery (pre --once test)."""
         now = time.time()
         for lat0, lon0 in _SIM_FOCI:
             for _ in range(n_per_focus):
-                lat = lat0 + random.uniform(-0.08, 0.08)
-                lon = lon0 + random.uniform(-0.10, 0.10)
-                ts = now - random.uniform(0, min(300, self.window_seconds * 0.5))
+                # menší rozptyl → ikona bližšie k ohnisku
+                lat = lat0 + random.uniform(-0.03, 0.03)
+                lon = lon0 + random.uniform(-0.04, 0.04)
+                ts = now - random.uniform(0, min(180, self.window_seconds * 0.3))
                 self._add(lat, lon, ts)
         log.info("LIGHTNING: simulate inject – %d ohnisk × %d úderov", len(_SIM_FOCI), n_per_focus)
 
@@ -144,6 +141,7 @@ class LightningCollector:
             self._prune(ts)
 
     def get_cells(self, max_cells: int = 15) -> List[CellActivity]:
+        """Klaster = mriežka len na zoskupenie; poloha = skutočné GPS úderov."""
         now = time.time()
         with self._lock:
             self._prune(now)
@@ -155,13 +153,18 @@ class LightningCollector:
 
         cells: List[CellActivity] = []
         for (i, j), items in buckets.items():
-            clat, clon = _cell_center(i, j, self.grid_deg)
-            last_ts = max(x.ts for x in items)
+            last = max(items, key=lambda x: x.ts)
+            if self.position_mode == "centroid":
+                lat = sum(x.lat for x in items) / len(items)
+                lon = sum(x.lon for x in items) / len(items)
+            else:
+                # predvolené: presne posledný zaznamenaný úder v klastri
+                lat, lon = last.lat, last.lon
             cells.append(CellActivity(
-                lat=clat,
-                lon=clon,
+                lat=lat,
+                lon=lon,
                 count=len(items),
-                last_ts=last_ts,
+                last_ts=last.ts,
                 cell_id=f"{i}_{j}",
             ))
         cells.sort(key=lambda c: (c.count, c.last_ts), reverse=True)
@@ -197,7 +200,6 @@ class LightningCollector:
         self._add(lat_f, lon_f, ts_f)
 
     def _run_simulate(self) -> None:
-        """Každých ~20 s dopĺňa fiktívne údery okolo testovacích miest."""
         log.warning("LIGHTNING: SIMULATE režim – fiktívne blesky (vypni simulate: false po teste)")
         while not self._stop.is_set():
             self.inject_simulate(n_per_focus=6)
@@ -257,6 +259,7 @@ def get_collector(cfg: Optional[dict] = None) -> LightningCollector:
             grid_deg=float(cfg.get("grid_deg", 0.20)),
             window_seconds=int(cfg.get("window_minutes", 15)) * 60,
             simulate=bool(cfg.get("simulate", False)),
+            position_mode=str(cfg.get("position_mode", "last")),
         )
         _collector.start()
     return _collector
@@ -281,7 +284,7 @@ def cells_to_alerts(
         headline = f"Blesky {c.count}/{window_minutes}min"
         desc = (
             f"Aktivita bleskov: {c.count} úderov / {window_minutes} min, "
-            f"posledný pred {age_min} min (Blitzortung)"
+            f"posledný pred {age_min} min @ {c.lat:.4f},{c.lon:.4f}"
         )
         out.append(Alert(
             identifier=identifier,
@@ -305,11 +308,9 @@ def resolve_lightning_position(alert: Alert) -> Optional[Tuple[str, float, float
 
 
 def fetch_lightning_alerts(cfg: dict) -> List[Tuple[Alert, float, float]]:
-    """Vráti zoznam (alert, lat, lon) pre aktívne bunky."""
     if not cfg.get("enabled", False):
         return []
     collector = get_collector(cfg)
-    # pri simulate a prázdnom buffri hneď doplň (napr. --once)
     if cfg.get("simulate") and not collector.get_cells(max_cells=1):
         collector.inject_simulate()
         time.sleep(0.2)
@@ -322,6 +323,9 @@ def fetch_lightning_alerts(cfg: dict) -> List[Tuple[Alert, float, float]]:
     out: List[Tuple[Alert, float, float]] = []
     for a, c in zip(alerts, cells):
         out.append((a, c.lat, c.lon))
-    log.info("LIGHTNING: %d aktívnych buniek (min_strikes=%s simulate=%s)",
-             len(out), min_count, bool(cfg.get("simulate")))
+    log.info(
+        "LIGHTNING: %d aktívnych buniek (min_strikes=%s simulate=%s pos=%s)",
+        len(out), min_count, bool(cfg.get("simulate")),
+        cfg.get("position_mode", "last"),
+    )
     return out
