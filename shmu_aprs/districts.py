@@ -134,7 +134,7 @@ DISTRICT_SHORT: Dict[str, str] = {
     "prešov": "PO", "presov": "PO", "bardejov": "BJ", "humenné": "HE", "humenne": "HE",
     "kežmarok": "KK", "kezmarok": "KK", "levoča": "LE", "levoca": "LE",
     "medzilaborce": "ML", "poprad": "PP", "sabinov": "SB",
-    "snina": "SN",  # pozor: SN predtým Sp. Nová Ves → teraz SNx
+    "snina": "SN",
     "stará ľubovňa": "SL", "stara lubovna": "SL", "stropkov": "SP", "stroplkov": "SP",
     "svidník": "SW", "svidnik": "SW",
     "vranov nad topľou": "VT", "vranov nad toplou": "VT",
@@ -161,8 +161,12 @@ REGION_CENTERS: Dict[str, Tuple[float, float]] = {
 
 DEFAULT_CENTER = (48.67, 19.70)
 
-# ~12 km – výrazný posun na mape aprs.fi
-_OFFSET_STEP_DEG = 0.11
+# Vzdialenosť medzi ikonami pri viacerých výstrahách v jednom okrese
+# ~0.05° ≈ 5.5 km – na aprs.fi sa neprekrývajú, stále v rámci okresu
+_OFFSET_RADIUS_DEG = 0.05
+_OFFSET_RING_DEG = 0.035
+# Minimálna vzdialenosť pri globálnom rozohnaní kolízií
+_MIN_SEPARATION_DEG = 0.04
 
 
 def _norm(name: str) -> str:
@@ -175,7 +179,6 @@ def lookup_district(name: str) -> Optional[Tuple[str, float, float]]:
     if n in DISTRICT_CENTERS:
         lat, lon = DISTRICT_CENTERS[n]
         return n, lat, lon
-    # dlhšie kľúče skôr (košice mesto pred košice)
     for key in sorted(DISTRICT_CENTERS.keys(), key=len, reverse=True):
         lat, lon = DISTRICT_CENTERS[key]
         if key == n or n.startswith(key + " ") or key.startswith(n + " "):
@@ -195,27 +198,35 @@ def offset_position(
     index: int,
     total: int = 1,
 ) -> Tuple[float, float]:
-    """Rozloží ikony do mriežky (~12 km krok), aby sa neprekrývali."""
+    """Rozloží ikony okolo stredu okresu, aby sa na mape neprekrývali.
+
+    Pri total==1 ostane stred.
+    Pri total>1 sú VŠETKY body na kružnici (~5.5 km), rovnomerne podľa indexu.
+    """
     if total <= 1 or index < 0:
         return lat, lon
-    # mriežka 3 stĺpce: N/S rady, E/W stĺpce
-    col = index % 3
-    row = index // 3
-    # vycentruj mriežku okolo stredu
-    cols = min(total, 3)
-    rows = (total + 2) // 3
-    dlat = (row - (rows - 1) / 2.0) * _OFFSET_STEP_DEG
-    dlon = (col - (cols - 1) / 2.0) * _OFFSET_STEP_DEG
+
+    # rovnomerné uhly na kružnici – žiadne dve ikony v tom istom bode
+    angle = (2.0 * math.pi * index) / total
+    angle += math.pi / 12.0  # mierny fázový posun
+
+    radius = _OFFSET_RADIUS_DEG
+    if index >= 6:
+        # druhý prstenec pri 7+ výstrahách
+        radius = _OFFSET_RADIUS_DEG + _OFFSET_RING_DEG
+        angle = (2.0 * math.pi * (index - 6)) / max(total - 6, 1)
+
+    dlat = radius * math.cos(angle)
     cos_lat = max(math.cos(math.radians(lat)), 0.3)
-    dlon = dlon / cos_lat
+    dlon = radius * math.sin(angle) / cos_lat
     return lat + dlat, lon + dlon
 
 
 def spread_collisions(
     points: List[Tuple[float, float]],
-    min_deg: float = 0.05,
+    min_deg: float = _MIN_SEPARATION_DEG,
 ) -> List[Tuple[float, float]]:
-    """Ak dve ikony skončia bližšie než min_deg (~5.5 km), odsunie ich."""
+    """Ak dve ikony skončia bližšie než min_deg (~4.5 km), odsunie ich."""
     if len(points) <= 1:
         return points
     out = [list(p) for p in points]
@@ -225,8 +236,7 @@ def spread_collisions(
             dlon = out[i][1] - out[j][1]
             dist = math.hypot(dlat, dlon * max(math.cos(math.radians(out[i][0])), 0.3))
             if dist < min_deg:
-                # posuň i severovýchodne o (min_deg - dist) + rezerva
-                push = min_deg - dist + 0.02
+                push = min_deg - dist + 0.015
                 angle = (i * 2.4 + j) % (2 * math.pi)
                 out[i][0] += push * math.cos(angle)
                 out[i][1] += push * math.sin(angle) / max(
