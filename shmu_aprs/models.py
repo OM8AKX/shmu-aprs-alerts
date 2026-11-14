@@ -35,7 +35,8 @@ class AlertLevel(IntEnum):
 
 _EVENT_SYMBOLS: dict[str, Tuple[str, str]] = {
     "búrka": ("\\", "T"), "búrk": ("\\", "T"), "thunderstorm": ("\\", "T"),
-    "blesky": ("\\", "T"), "blesk": ("\\", "T"), "lightning": ("\\", "T"),
+    # blesky – vždy overlay table \ + J
+    "blesky": ("\\", "J"), "blesk": ("\\", "J"), "lightning": ("\\", "J"),
     "vietor": ("\\", "<"), "wind": ("\\", "<"), "víchr": ("\\", "<"),
     "dážď": ("\\", "`"), "rain": ("\\", "`"), "lejak": ("\\", "`"),
     "hmla": ("\\", "H"), "fog": ("\\", "H"),
@@ -82,10 +83,17 @@ class Alert:
         return True
 
     def aprs_symbol(self) -> Tuple[str, str]:
+        # blesky – výhradne \J (bez ohľadu na stupeň)
+        if self.identifier.startswith("LGT-") or self.source == "LIGHTNING":
+            return "\\", "J"
+        low = (self.event or "").lower()
+        if "blesk" in low or "lightning" in low:
+            return "\\", "J"
+
         by_event = _symbol_for_event(self.event)
         if by_event:
             table, code = by_event
-            if self.level == AlertLevel.RED and code not in ("T", "!"):
+            if self.level == AlertLevel.RED and code not in ("T", "!", "J"):
                 return "\\", "!"
             return table, code
         if self.level == AlertLevel.RED:
