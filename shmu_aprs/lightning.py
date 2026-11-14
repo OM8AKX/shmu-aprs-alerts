@@ -16,6 +16,7 @@ import json
 import logging
 import math
 import random
+import ssl
 import threading
 import time
 from collections import defaultdict
@@ -32,13 +33,13 @@ DEFAULT_WEST = 16.50
 DEFAULT_NORTH = 49.92
 DEFAULT_EAST = 22.90
 
+# ws7 má často certifikat s hostname mismatch – radšej ws1/ws8
 WS_SERVERS = (
     "wss://ws1.blitzortung.org/",
-    "wss://ws7.blitzortung.org/",
     "wss://ws8.blitzortung.org/",
+    "wss://ws6.blitzortung.org/",
 )
 
-# testovacie ohniská (lat, lon)
 _SIM_FOCI = (
     (48.72, 21.26),
     (49.00, 21.24),
@@ -51,7 +52,7 @@ _SIM_FOCI = (
 class Strike:
     lat: float
     lon: float
-    ts: float  # unix seconds
+    ts: float
 
 
 @dataclass
@@ -71,9 +72,15 @@ def _cell_key(lat: float, lon: float, grid: float) -> Tuple[int, int]:
     return int(math.floor(lat / grid)), int(math.floor(lon / grid))
 
 
-class LightningCollector:
-    """Zbiera údery na pozadí a agreguje do klastrov."""
+def _sslopt() -> dict:
+    """Blitzortung certs často nezodpovedajú hostname – overenie vypnuté."""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return {"context": ctx}
 
+
+class LightningCollector:
     def __init__(
         self,
         south: float = DEFAULT_SOUTH,
@@ -83,7 +90,7 @@ class LightningCollector:
         grid_deg: float = 0.20,
         window_seconds: int = 900,
         simulate: bool = False,
-        position_mode: str = "last",  # "last" | "centroid"
+        position_mode: str = "last",
     ):
         self.south = south
         self.west = west
@@ -122,7 +129,6 @@ class LightningCollector:
         now = time.time()
         for lat0, lon0 in _SIM_FOCI:
             for _ in range(n_per_focus):
-                # menší rozptyl → ikona bližšie k ohnisku
                 lat = lat0 + random.uniform(-0.03, 0.03)
                 lon = lon0 + random.uniform(-0.04, 0.04)
                 ts = now - random.uniform(0, min(180, self.window_seconds * 0.3))
@@ -141,7 +147,6 @@ class LightningCollector:
             self._prune(ts)
 
     def get_cells(self, max_cells: int = 15) -> List[CellActivity]:
-        """Klaster = mriežka len na zoskupenie; poloha = skutočné GPS úderov."""
         now = time.time()
         with self._lock:
             self._prune(now)
@@ -158,7 +163,6 @@ class LightningCollector:
                 lat = sum(x.lat for x in items) / len(items)
                 lon = sum(x.lon for x in items) / len(items)
             else:
-                # predvolené: presne posledný zaznamenaný úder v klastri
                 lat, lon = last.lat, last.lon
             cells.append(CellActivity(
                 lat=lat,
@@ -217,16 +221,28 @@ class LightningCollector:
             url = random.choice(WS_SERVERS)
             try:
                 log.info("LIGHTNING: pripájam %s", url)
-                ws = websocket.create_connection(url, timeout=20, enable_multithread=True)
+                ws = websocket.create_connection(
+                    url,
+                    timeout=25,
+                    enable_multithread=True,
+                    sslopt=_sslopt(),
+                )
+                # subscribe (kompatibilita s map klientmi Blitzortung)
                 ws.send(json.dumps({"a": 542}))
                 self._connected = True
+                log.info("LIGHTNING: pripojené %s", url)
                 backoff = 3.0
-                ws.settimeout(30)
+                ws.settimeout(45)
+                idle = 0
                 while not self._stop.is_set():
                     try:
                         msg = ws.recv()
                     except Exception:
-                        break
+                        idle += 1
+                        if idle > 3:
+                            break
+                        continue
+                    idle = 0
                     if not msg:
                         break
                     if isinstance(msg, bytes):
