@@ -2,6 +2,7 @@
 
 Zdroj: Blitzortung.org live websocket (nekomerčné / hobby použitie).
 Subscribe: {"a":111}; stream je LZW-obfuskovaný → decode pred JSON.
+Len servery ws1/ws8 (ws6 vracia HTTP 200 namiesto WSS upgrade).
 """
 
 from __future__ import annotations
@@ -27,10 +28,10 @@ DEFAULT_WEST = 16.50
 DEFAULT_NORTH = 49.92
 DEFAULT_EAST = 22.90
 
+# ws6 vracia HTML 200 (nie WebSocket) – nepoužívať
 WS_SERVERS = (
     "wss://ws1.blitzortung.org/",
     "wss://ws8.blitzortung.org/",
-    "wss://ws6.blitzortung.org/",
 )
 
 _WS_HEADERS = [
@@ -250,8 +251,10 @@ class LightningCollector:
             return
 
         backoff = 3.0
+        idx = 0
         while not self._stop.is_set():
-            url = random.choice(WS_SERVERS)
+            url = WS_SERVERS[idx % len(WS_SERVERS)]
+            idx += 1
             try:
                 log.info("LIGHTNING: pripájam %s", url)
                 ws = websocket.create_connection(
@@ -261,7 +264,6 @@ class LightningCollector:
                     sslopt=_sslopt(),
                     header=_WS_HEADERS,
                 )
-                # aktuálny subscribe kód (nie 542)
                 ws.send(json.dumps({"a": 111}))
                 self._connected = True
                 log.info("LIGHTNING: pripojené %s (subscribe a=111)", url)
@@ -287,8 +289,8 @@ class LightningCollector:
                 self._connected = False
             except Exception as e:
                 self._connected = False
-                err = str(e).split("\n")[0][:160]
-                log.warning("LIGHTNING: spojenie zlyhalo: %s – retry %.0fs", err, backoff)
+                err = str(e).split("\n")[0][:120]
+                log.warning("LIGHTNING: spojenie zlyhalo (%s): %s – retry %.0fs", url, err, backoff)
                 self._stop.wait(backoff)
                 backoff = min(backoff * 1.5, 60.0)
 
