@@ -1,13 +1,7 @@
 """Aktivita bleskov – agregácia pre APRS (SK + 30 km).
 
 Zdroj: Blitzortung.org live websocket (nekomerčné / hobby použitie).
-Údery sa zoskupia (aby sa nezahltil APRS-IS), ikona však ide na
-skutočnú polohu – centroid úderov v klastri, resp. posledný úder.
-
-Test bez reálnej búrky:
-  lightning:
-    enabled: true
-    simulate: true
+Subscribe: {"a":111}; stream je LZW-obfuskovaný → decode pred JSON.
 """
 
 from __future__ import annotations
@@ -33,12 +27,16 @@ DEFAULT_WEST = 16.50
 DEFAULT_NORTH = 49.92
 DEFAULT_EAST = 22.90
 
-# ws7 má často certifikat s hostname mismatch – radšej ws1/ws8
 WS_SERVERS = (
     "wss://ws1.blitzortung.org/",
     "wss://ws8.blitzortung.org/",
     "wss://ws6.blitzortung.org/",
 )
+
+_WS_HEADERS = [
+    "User-Agent: Mozilla/5.0 (compatible; shmu-aprs-alerts/1.0)",
+    "Origin: https://map.blitzortung.org",
+]
 
 _SIM_FOCI = (
     (48.72, 21.26),
@@ -73,11 +71,35 @@ def _cell_key(lat: float, lon: float, grid: float) -> Tuple[int, int]:
 
 
 def _sslopt() -> dict:
-    """Blitzortung certs často nezodpovedajú hostname – overenie vypnuté."""
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     return {"context": ctx}
+
+
+def _decode_blitzortung(b: str) -> str:
+    """Dekódovanie LZW-style streamu z Blitzortung map klientov."""
+    if not b:
+        return ""
+    e: Dict[int, str] = {}
+    d = list(b)
+    c = d[0]
+    f = c
+    g = [c]
+    h = 256
+    o = h
+    for i in range(1, len(d)):
+        a_code = ord(d[i])
+        if h > a_code:
+            a = d[i]
+        else:
+            a = e.get(a_code) or (f + c)
+        g.append(a)
+        c = a[0]
+        e[o] = f + c
+        o += 1
+        f = a
+    return "".join(g)
 
 
 class LightningCollector:
@@ -174,13 +196,23 @@ class LightningCollector:
         cells.sort(key=lambda c: (c.count, c.last_ts), reverse=True)
         return cells[:max_cells]
 
-    def _parse_message(self, raw: str) -> None:
+    def _parse_message(self, raw) -> None:
+        if isinstance(raw, bytes):
+            text = raw.decode("utf-8", errors="ignore")
+        else:
+            text = raw
+
+        data = None
         try:
-            data = json.loads(raw)
+            data = json.loads(text)
         except json.JSONDecodeError:
-            return
+            try:
+                data = json.loads(_decode_blitzortung(text))
+            except (json.JSONDecodeError, Exception):
+                return
         if not isinstance(data, dict):
             return
+
         lat = data.get("lat")
         lon = data.get("lon")
         if lat is None or lon is None:
@@ -192,6 +224,7 @@ class LightningCollector:
             lon_f = float(lon)
         except (TypeError, ValueError):
             return
+
         ts = data.get("time") or data.get("t") or data.get("ts")
         try:
             ts_f = float(ts)
@@ -226,11 +259,12 @@ class LightningCollector:
                     timeout=25,
                     enable_multithread=True,
                     sslopt=_sslopt(),
+                    header=_WS_HEADERS,
                 )
-                # subscribe (kompatibilita s map klientmi Blitzortung)
-                ws.send(json.dumps({"a": 542}))
+                # aktuálny subscribe kód (nie 542)
+                ws.send(json.dumps({"a": 111}))
                 self._connected = True
-                log.info("LIGHTNING: pripojené %s", url)
+                log.info("LIGHTNING: pripojené %s (subscribe a=111)", url)
                 backoff = 3.0
                 ws.settimeout(45)
                 idle = 0
@@ -245,8 +279,6 @@ class LightningCollector:
                     idle = 0
                     if not msg:
                         break
-                    if isinstance(msg, bytes):
-                        msg = msg.decode("utf-8", errors="ignore")
                     self._parse_message(msg)
                 try:
                     ws.close()
@@ -255,7 +287,8 @@ class LightningCollector:
                 self._connected = False
             except Exception as e:
                 self._connected = False
-                log.warning("LIGHTNING: spojenie zlyhalo: %s – retry %.0fs", e, backoff)
+                err = str(e).split("\n")[0][:160]
+                log.warning("LIGHTNING: spojenie zlyhalo: %s – retry %.0fs", err, backoff)
                 self._stop.wait(backoff)
                 backoff = min(backoff * 1.5, 60.0)
 
