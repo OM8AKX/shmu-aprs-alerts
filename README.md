@@ -99,10 +99,24 @@ journalctl -u shmu-aprs-alerts -f
 ### 5. Aktualizácia projektu
 
 ```bash
-# ak existuje update.sh:
+# kód + závislosti
 sudo /opt/shmu-aprs-alerts/update.sh
 
-# alebo ručne:
+# filter (všetky kraje/okresy) – zachová callsign a passcode
+sudo /opt/shmu-aprs-alerts/update-config.sh
+```
+
+`update-config.sh` stiahne aktuálny `config.example.yaml` z GitHubu, **pridá chýbajúce kraje a okresy** do `/etc/shmu-aprs/config.yaml` a urobí zálohu. Callsign, passcode a ostatné nastavenia ostanú.
+
+```bash
+sudo /opt/shmu-aprs-alerts/update-config.sh --check           # len ukáž zmeny
+sudo /opt/shmu-aprs-alerts/update-config.sh --replace-filter  # nahraď celý filter zo vzoru
+sudo /opt/shmu-aprs-alerts/update-config.sh --no-restart      # bez reštartu služby
+```
+
+Alebo ručne:
+
+```bash
 cd /tmp && rm -rf shmu-aprs-alerts
 git clone https://github.com/OM8AKX/shmu-aprs-alerts.git
 sudo systemctl stop shmu-aprs-alerts
@@ -112,7 +126,7 @@ sudo /opt/shmu-aprs-alerts/venv/bin/pip install -r /opt/shmu-aprs-alerts/require
 sudo systemctl start shmu-aprs-alerts
 ```
 
-`/etc/shmu-aprs/config.yaml` sa pri aktualizácii **neprepisuje**.
+`/etc/shmu-aprs/config.yaml` sa pri aktualizácii kódu **neprepisuje** – na filter použi `update-config.sh`.
 
 ### 6. Test jedným behom
 
