@@ -15,7 +15,7 @@ Beží ako **systemd** služba s watchdogom, voliteľne v Dockeri.
 ### Meteorologické výstrahy
 - sťahovanie zo SHMÚ (CAP 1.2 + HTML fallback)
 - **iba okresy** (nie kraje / celoslovenské)
-- filter podľa zoznamu okresov v configu (KSK, PSK, ZSK, BBSK, …)
+- filter podľa zoznamu okresov v configu (**všetky kraje SR** – BSK, TTSK, TSK, NSK, ZSK, BBSK, PSK, KSK)
 - stupne **1. / 2. / 3.** v popise (`Výstraha 1.st.` …)
 - APRS objekt v **strede okresu**; pri viacerých výstrahách v okrese **posun ikon** (~5,5 km)
 - opakované vysielanie každých **30 minút**
@@ -176,12 +176,17 @@ aprs:
   port: 14580
 
 filter:
-  regions: ["KSK", "PSK", "ZSK", "BBSK"]   # pre HTML roll / výber krajov
-  districts:                                 # len tieto okresy sa vysielajú
-    - "Košice mesto"
+  regions: ["BSK", "TTSK", "TSK", "NSK", "ZSK", "BBSK", "PSK", "KSK"]  # všetky kraje SR
+  districts:                                 # všetky okresy – kompletný zoznam v config.example.yaml
+    - "Bratislava"
+    - "Trnava"
+    - "Trenčín"
+    - "Nitra"
+    - "Žilina"
+    - "Banská Bystrica"
     - "Prešov"
-    - "Poprad"
-    # … kompletný zoznam v config.example.yaml
+    - "Košice mesto"
+    # … a všetky ostatné okresy
   min_level: 1
 
 hydro:

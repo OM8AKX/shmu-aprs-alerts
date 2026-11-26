@@ -11,33 +11,55 @@ aprs:
   software: "SHMU"
 
 filter:
+  # Všetky kraje SR (používa sa pri HTML fallback roll=)
   regions:
-    - "KSK"
-    - "PSK"
-    - "ZSK"
-    - "BBSK"
+    - "BSK"    # Bratislavský
+    - "TTSK"   # Trnavský
+    - "TSK"    # Trenčiansky
+    - "NSK"    # Nitriansky
+    - "ZSK"    # Žilinský
+    - "BBSK"   # Banskobystrický
+    - "PSK"    # Prešovský
+    - "KSK"    # Košický
+  # Všetky okresy SR – výstrahy sa zobrazia pre tieto okresy
   districts:
-    - "Košice mesto"
-    - "Košice okolie"
-    - "Gelnica"
-    - "Michalovce"
-    - "Rožňava"
-    - "Sobrance"
-    - "Spišská Nová Ves"
-    - "Trebišov"
-    - "Prešov"
-    - "Bardejov"
-    - "Humenné"
-    - "Kežmarok"
-    - "Levoča"
-    - "Medzilaborce"
-    - "Poprad"
-    - "Sabinov"
-    - "Snina"
-    - "Stará Ľubovňa"
-    - "Stropkov"
-    - "Svidník"
-    - "Vranov nad Topľou"
+    # Bratislavský kraj (BSK)
+    - "Bratislava"
+    - "Bratislava I"
+    - "Bratislava II"
+    - "Bratislava III"
+    - "Bratislava IV"
+    - "Bratislava V"
+    - "Malacky"
+    - "Pezinok"
+    - "Senec"
+    # Trnavský kraj (TTSK)
+    - "Trnava"
+    - "Dunajská Streda"
+    - "Galanta"
+    - "Hlohovec"
+    - "Piešťany"
+    - "Senica"
+    - "Skalica"
+    # Trenčiansky kraj (TSK)
+    - "Trenčín"
+    - "Bánovce nad Bebravou"
+    - "Ilava"
+    - "Myjava"
+    - "Nové Mesto nad Váhom"
+    - "Partizánske"
+    - "Považská Bystrica"
+    - "Prievidza"
+    - "Púchov"
+    # Nitriansky kraj (NSK)
+    - "Nitra"
+    - "Komárno"
+    - "Levice"
+    - "Nové Zámky"
+    - "Šaľa"
+    - "Topoľčany"
+    - "Zlaté Moravce"
+    # Žilinský kraj (ZSK)
     - "Žilina"
     - "Bytča"
     - "Čadca"
@@ -49,6 +71,7 @@ filter:
     - "Ružomberok"
     - "Turčianske Teplice"
     - "Tvrdošín"
+    # Banskobystrický kraj (BBSK)
     - "Banská Bystrica"
     - "Banská Štiavnica"
     - "Brezno"
@@ -62,6 +85,29 @@ filter:
     - "Zvolen"
     - "Žarnovica"
     - "Žiar nad Hronom"
+    # Prešovský kraj (PSK)
+    - "Prešov"
+    - "Bardejov"
+    - "Humenné"
+    - "Kežmarok"
+    - "Levoča"
+    - "Medzilaborce"
+    - "Poprad"
+    - "Sabinov"
+    - "Snina"
+    - "Stará Ľubovňa"
+    - "Stropkov"
+    - "Svidník"
+    - "Vranov nad Topľou"
+    # Košický kraj (KSK)
+    - "Košice mesto"
+    - "Košice okolie"
+    - "Gelnica"
+    - "Michalovce"
+    - "Rožňava"
+    - "Sobrance"
+    - "Spišská Nová Ves"
+    - "Trebišov"
   min_level: 1
 
 hydro:
