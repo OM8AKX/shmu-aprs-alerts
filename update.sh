@@ -131,7 +131,7 @@ if [[ $NEED_DEPS -eq 1 ]]; then
 fi
 
 chown -R "$SERVICE_USER:$SERVICE_USER" "$PREFIX"
-chmod 755 "$PREFIX/update.sh" 2>/dev/null || true
+chmod 755 "$PREFIX/update.sh" "$PREFIX/update-config.sh" 2>/dev/null || true
 
 # systemd unit (ak sa zmenil)
 if [[ -f "$PREFIX/systemd/${SERVICE_NAME}.service" ]]; then

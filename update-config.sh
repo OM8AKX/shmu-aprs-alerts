@@ -123,21 +123,29 @@ if replace_filter:
     live_f["districts"] = list(ex_districts)
     if "min_level" in ex_f:
         live_f["min_level"] = ex_f["min_level"]
-    added_regions = [r for r in ex_regions if r not in old_regions]
-    added_districts = [d for d in ex_districts if d not in old_districts]
-    removed_r = [r for r in old_regions if r not in ex_regions]
-    removed_d = [d for d in old_districts if d not in ex_districts]
+    old_r_l = {str(x).lower() for x in old_regions}
+    old_d_l = {str(x).lower() for x in old_districts}
+    ex_r_l = {str(x).lower() for x in ex_regions}
+    ex_d_l = {str(x).lower() for x in ex_districts}
+    added_regions = [r for r in ex_regions if str(r).lower() not in old_r_l]
+    added_districts = [d for d in ex_districts if str(d).lower() not in old_d_l]
+    removed_r = [r for r in old_regions if str(r).lower() not in ex_r_l]
+    removed_d = [d for d in old_districts if str(d).lower() not in ex_d_l]
 else:
-    # merge: pridaj chýbajúce, nič nemazaj
+    # merge: pridaj chýbajúce (porovnanie bez ohľadu na veľkosť písmen), nič nemazaj
     regions = list(old_regions)
+    regions_lower = {str(x).lower() for x in regions}
     for r in ex_regions:
-        if r not in regions:
+        if str(r).lower() not in regions_lower:
             regions.append(r)
+            regions_lower.add(str(r).lower())
             added_regions.append(r)
     districts = list(old_districts)
+    districts_lower = {str(x).lower() for x in districts}
     for d in ex_districts:
-        if d not in districts:
+        if str(d).lower() not in districts_lower:
             districts.append(d)
+            districts_lower.add(str(d).lower())
             added_districts.append(d)
     live_f["regions"] = regions
     live_f["districts"] = districts
