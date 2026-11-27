@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from enum import IntEnum
 from typing import List, Optional, Tuple
 from zoneinfo import ZoneInfo
+
+
+
+def strip_diacritics(text: str) -> str:
+    """Odstráni diakritiku (ú → u, š → s, …) pre APRS komentáre."""
+    if not text:
+        return ""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
 class AlertLevel(IntEnum):
@@ -105,7 +115,7 @@ class Alert:
     def short_comment(self, max_len: int = 67, district: str = "") -> str:
         if self.identifier.startswith("LGT-") or (self.event or "").lower().startswith("blesk"):
             base = self.headline or self.description or "Blesky"
-            return base[:max_len]
+            return strip_diacritics(base)[:max_len]
         degree = self.level.degree_short
         place = district or (",".join(self.areas[:2]) if self.areas else "SK")
         validity = ""
@@ -127,7 +137,7 @@ class Alert:
             elif eff:
                 validity = f"od {eff.strftime('%d.%m %H:%M')}"
 
-        head = f"Výstraha {degree} {place}"
+        head = f"Vystraha {degree} {place}"
         if validity:
             reserved = len(head) + 1 + len(validity) + 1
             room = max_len - reserved
@@ -135,7 +145,7 @@ class Alert:
             if room < 1 or not event:
                 base = f"{head} {validity}".strip()
             elif len(event) > room:
-                event = event[: max(room - 1, 1)] + "…"
+                event = event[: max(room - 1, 1)] + "..."
                 base = f"{head} {event} {validity}"
             else:
                 base = f"{head} {event} {validity}"
@@ -143,11 +153,11 @@ class Alert:
             event = (self.event or "").strip()
             base = f"{head} {event}".strip()
             if len(base) > max_len:
-                base = base[: max_len - 1] + "…"
-        return base[:max_len]
+                base = base[: max_len - 1] + "..."
+        return strip_diacritics(base)[:max_len]
 
     def full_text(self) -> str:
-        parts = [f"SHMU výstraha {self.level.degree_sk}", self.event]
+        parts = [f"SHMU vystraha {self.level.degree_sk}", self.event]
         if self.areas:
             parts.append(" / ".join(self.areas[:4]))
         if self.effective and self.expires:
@@ -158,10 +168,10 @@ class Alert:
             except Exception:
                 eff = self.effective.astimezone()
                 exp = self.expires.astimezone()
-            parts.append(f"{eff.strftime('%d.%m.%Y %H:%M')}–{exp.strftime('%d.%m.%Y %H:%M')}")
+            parts.append(f"{eff.strftime('%d.%m.%Y %H:%M')}-{exp.strftime('%d.%m.%Y %H:%M')}")
         elif self.expires:
             parts.append(f"do {self.expires.astimezone().strftime('%d.%m %H:%M')}")
-        return " | ".join(parts)
+        return strip_diacritics(" | ".join(parts))
 
     def object_name(self, district_code: str = "") -> str:
         code = (district_code or "SK")[:3].upper()
