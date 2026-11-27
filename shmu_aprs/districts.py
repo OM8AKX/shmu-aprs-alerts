@@ -149,9 +149,11 @@ DISTRICT_SHORT: Dict[str, str] = {
 
 DEFAULT_CENTER = (48.67, 19.70)
 
-_OFFSET_RADIUS_DEG = 0.05
-_OFFSET_RING_DEG = 0.035
-_MIN_SEPARATION_DEG = 0.04
+# Rozostupy ikon pri viacerých výstrahách v jednom okrese (~km)
+# 0.08° ≈ 9 km – dobre viditeľné na aprs.fi
+_OFFSET_RADIUS_DEG = 0.08
+_OFFSET_RING_DEG = 0.06
+_MIN_SEPARATION_DEG = 0.07
 
 
 def _norm(name: str) -> str:
@@ -190,15 +192,30 @@ def offset_position(
     index: int,
     total: int = 1,
 ) -> Tuple[float, float]:
-    """Rozloží ikony okolo stredu okresu, aby sa na mape neprekrývali."""
+    """Rozloží ikony okolo stredu okresu, aby sa na mape neprekrývali.
+
+    - 1 ikona: stred okresu
+    - 2+ ikony: na kružnici (prípadne ďalších kružniciach po 6)
+    - polomer rastie s počtom výstrah
+    """
     if total <= 1 or index < 0:
         return lat, lon
-    angle = (2.0 * math.pi * index) / total
-    angle += math.pi / 12.0
-    radius = _OFFSET_RADIUS_DEG
-    if index >= 6:
-        radius = _OFFSET_RADIUS_DEG + _OFFSET_RING_DEG
-        angle = (2.0 * math.pi * (index - 6)) / max(total - 6, 1)
+
+    per_ring = 6
+    ring = index // per_ring
+    pos_in_ring = index % per_ring
+    # koľko ikon je v tomto prstenci
+    remaining = total - ring * per_ring
+    count_in_ring = min(per_ring, remaining)
+
+    # rovnomerné uhly v prstenci + mierne natočenie medzi prstencami
+    angle = (2.0 * math.pi * pos_in_ring) / count_in_ring
+    angle += math.pi / 12.0 + ring * 0.35
+
+    # základný polomer + nárast s počtom + ďalší prstenec
+    scale = 1.0 + 0.12 * max(total - 2, 0)
+    radius = _OFFSET_RADIUS_DEG * scale + ring * _OFFSET_RING_DEG
+
     dlat = radius * math.cos(angle)
     cos_lat = max(math.cos(math.radians(lat)), 0.3)
     dlon = radius * math.sin(angle) / cos_lat
@@ -209,21 +226,32 @@ def spread_collisions(
     points: List[Tuple[float, float]],
     min_deg: float = _MIN_SEPARATION_DEG,
 ) -> List[Tuple[float, float]]:
+    """Odstrčí ikony, ktoré sú bližšie než min_deg (aj medzi okresmi)."""
     if len(points) <= 1:
         return points
     out = [list(p) for p in points]
-    for i in range(len(out)):
-        for j in range(i):
-            dlat = out[i][0] - out[j][0]
-            dlon = out[i][1] - out[j][1]
-            dist = math.hypot(dlat, dlon * max(math.cos(math.radians(out[i][0])), 0.3))
-            if dist < min_deg:
-                push = min_deg - dist + 0.015
-                angle = (i * 2.4 + j) % (2 * math.pi)
-                out[i][0] += push * math.cos(angle)
-                out[i][1] += push * math.sin(angle) / max(
-                    math.cos(math.radians(out[i][0])), 0.3
-                )
+    # niekoľko prechodov – stabilnejšie pri väčšom počte
+    for _ in range(3):
+        moved = False
+        for i in range(len(out)):
+            for j in range(i):
+                dlat = out[i][0] - out[j][0]
+                dlon = out[i][1] - out[j][1]
+                cos_lat = max(math.cos(math.radians(out[i][0])), 0.3)
+                dist = math.hypot(dlat, dlon * cos_lat)
+                if dist < min_deg:
+                    push = (min_deg - dist) / 2.0 + 0.01
+                    if dist < 1e-9:
+                        angle = (i * 2.4 + j) % (2 * math.pi)
+                    else:
+                        angle = math.atan2(dlon * cos_lat, dlat)
+                    out[i][0] += push * math.cos(angle)
+                    out[i][1] += push * math.sin(angle) / cos_lat
+                    out[j][0] -= push * math.cos(angle)
+                    out[j][1] -= push * math.sin(angle) / cos_lat
+                    moved = True
+        if not moved:
+            break
     return [(p[0], p[1]) for p in out]
 
 
